@@ -7,5 +7,9 @@ these are details of personal vad with xmind:
 todo:
 
 1、update model codes: done
+
 2、update training codes...
+
 3、update experiments results...
+
+welcome for pr to finish this.
