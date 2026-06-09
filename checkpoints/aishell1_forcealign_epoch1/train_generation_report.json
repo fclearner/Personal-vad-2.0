@@ -1,0 +1,18 @@
+{
+  "datalist": "/root/autodl-tmp/qwen3_asr_aishell1_verify/aishell1_train_raw_data.list",
+  "aligner": "/root/autodl-tmp/modelscope/Qwen/Qwen3-ForcedAligner-0___6B",
+  "out_dir": "/root/autodl-tmp/pvad2_aishell_forcealign_full",
+  "records": 120098,
+  "skipped_existing": 0,
+  "generated_this_run": 120098,
+  "failed_this_run": 0,
+  "frames_this_run": 54068199,
+  "label_counts_this_run": {
+    "0": 39853387,
+    "2": 14214812
+  },
+  "feature_format": "npz:features float16",
+  "label_format": "npy uint8",
+  "finished_at": "2026-06-09 16:32:35",
+  "disk": "free=55.4GiB used=44.6GiB total=100.0GiB"
+}

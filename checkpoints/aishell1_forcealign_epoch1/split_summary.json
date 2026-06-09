@@ -1,0 +1,6 @@
+{
+  "records": 120098,
+  "train": 118098,
+  "valid": 2000,
+  "valid_size_rule": "min(2000, round(2%))"
+}

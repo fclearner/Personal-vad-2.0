@@ -1,0 +1,85 @@
+{
+  "evaluated_at": "2026-06-09 16:57:26",
+  "checkpoint": "/root/autodl-tmp/pvad2_aishell_forcealign_full/train_epoch1/best.pt",
+  "manifest": "/root/autodl-tmp/pvad2_aishell_forcealign_test/pvad_manifest.jsonl",
+  "records": 7176,
+  "frames": 3596689,
+  "loss": 0.08997454329086484,
+  "strict_3class_accuracy": 0.966953495284135,
+  "strict_3class_confusion_matrix_rows_true_cols_pred": [
+    [
+      2554224,
+      0,
+      18696
+    ],
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      100162,
+      0,
+      923607
+    ]
+  ],
+  "strict_3class_per_class": {
+    "0": {
+      "support": 2572920,
+      "predicted": 2654386,
+      "tp": 2554224,
+      "precision": 0.962265473069855,
+      "recall": 0.9927335478755656,
+      "f1": 0.9772620925578109
+    },
+    "1": {
+      "support": 0,
+      "predicted": 0,
+      "tp": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "2": {
+      "support": 1023769,
+      "predicted": 942303,
+      "tp": 923607,
+      "precision": 0.9801592481399295,
+      "recall": 0.9021634763310864,
+      "f1": 0.9395454489967814
+    }
+  },
+  "binary_vad_accuracy": 0.966953495284135,
+  "binary_vad_confusion_matrix_rows_true_cols_pred": [
+    [
+      923607,
+      100162
+    ],
+    [
+      18696,
+      2554224
+    ]
+  ],
+  "binary_vad_per_class": {
+    "0": {
+      "name": "non_speech",
+      "support": 1023769,
+      "predicted": 942303,
+      "tp": 923607,
+      "precision": 0.9801592481399295,
+      "recall": 0.9021634763310864,
+      "f1": 0.9395454489967814
+    },
+    "1": {
+      "name": "speech",
+      "support": 2572920,
+      "predicted": 2654386,
+      "tp": 2554224,
+      "precision": 0.962265473069855,
+      "recall": 0.9927335478755656,
+      "f1": 0.9772620925578109
+    }
+  },
+  "elapsed_sec": 15.836,
+  "note": "Labels contain class 0 speech and class 2 non-speech only. Binary VAD treats predicted classes 0 and 1 as speech, class 2 as non-speech."
+}

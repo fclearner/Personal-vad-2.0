@@ -4,3 +4,5 @@ __pycache__/
 runs/
 *.pt
 *.pth
+!checkpoints/aishell1_forcealign_epoch1/best.pt
+*.pid
