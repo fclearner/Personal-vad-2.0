@@ -7,7 +7,12 @@ from .utils import get_activation
 from .attention import MultiHeadedAttention, RelPositionMultiHeadedAttention
 from .position_wise_feed_forward import PositionwiseFeedForward
 from .convolution import ConvolutionModule
-from typeguard import check_argument_types
+
+try:
+  from typeguard import check_argument_types
+except ImportError:
+  def check_argument_types():
+    return True
 
 
 class ConformerBlock(nn.Module):
@@ -62,6 +67,7 @@ class ConformerBlock(nn.Module):
 
     self.feed_forward = PositionwiseFeedForward(size, linear_units,
                                                 dropout_rate, activation)
+    self.feed_forward_macaron = None
     if macaron_style:
         self.feed_forward_macaron = PositionwiseFeedForward(size,
                                                             linear_units,

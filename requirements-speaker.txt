@@ -1,0 +1,3 @@
+modelscope>=1.36
+soundfile>=0.14
+torchaudio>=2.1

@@ -9,7 +9,12 @@ from typing import Tuple
 
 import torch
 from torch import nn
-from typeguard import check_argument_types
+
+try:
+  from typeguard import check_argument_types
+except ImportError:
+  def check_argument_types():
+    return True
 
 
 class ConvolutionModule(nn.Module):
