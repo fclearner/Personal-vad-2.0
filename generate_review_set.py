@@ -210,6 +210,12 @@ def _limit_peak(mixture):
   return mixture * scale, scale
 
 
+def _write_pcm16_and_reload(path, waveform):
+  """Persist the review audio and return the exact decoded training signal."""
+  sf.write(str(path), waveform.numpy(), SAMPLE_RATE, subtype='PCM_16')
+  return load_audio(path, SAMPLE_RATE)
+
+
 def _plot_review(path, waveform, labels, scenario, speakers, frame_shift_ms):
   import matplotlib
   matplotlib.use('Agg')
@@ -409,7 +415,13 @@ class ReviewSetGenerator:
       components.append(noise_metadata)
 
     mixture, limiter_scale = _limit_peak(mixture)
-    features = self.feature_extractor.extract(mixture)
+    sample_id = f'{split}-{sample_index:04d}-{scenario}'
+    audio_path = self.audio_dir / f'{sample_id}.wav'
+    feature_path = self.feature_dir / f'{sample_id}.npy'
+    label_path = self.label_dir / f'{sample_id}.npy'
+    plot_path = self.plot_dir / f'{sample_id}.png'
+    stored_mixture = _write_pcm16_and_reload(audio_path, mixture)
+    features = self.feature_extractor.extract(stored_mixture)
     timings = self.feature_extractor.frame_timing(features.size(0))
     labels = labels_from_intervals(
         timings, target_intervals, non_target_intervals)
@@ -428,13 +440,6 @@ class ReviewSetGenerator:
       raise RuntimeError(
           f'{scenario} sample has no expected class {expected}.')
 
-    sample_id = f'{split}-{sample_index:04d}-{scenario}'
-    audio_path = self.audio_dir / f'{sample_id}.wav'
-    feature_path = self.feature_dir / f'{sample_id}.npy'
-    label_path = self.label_dir / f'{sample_id}.npy'
-    plot_path = self.plot_dir / f'{sample_id}.png'
-    sf.write(
-        str(audio_path), mixture.numpy(), SAMPLE_RATE, subtype='PCM_16')
     np.save(feature_path, features.numpy().astype(np.float32))
     np.save(label_path, labels.numpy().astype(np.int64))
     has_non_target = any(
@@ -447,7 +452,7 @@ class ReviewSetGenerator:
             else non_target_speaker if has_non_target else None),
     }
     _plot_review(
-        plot_path, mixture, labels, scenario, speaker_payload,
+        plot_path, stored_mixture, labels, scenario, speaker_payload,
         self.feature_extractor.config.output_shift_ms)
 
     class_counts = {

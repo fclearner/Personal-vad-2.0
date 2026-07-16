@@ -11,9 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from generate_review_set import (
-    DEV_SCENARIOS, SAMPLE_RATE, TRAIN_SCENARIOS, _active_rms, _add_noise,
-    scenario_plan, simulated_farfield_rir, split_speakers,
-    transform_intervals)
+    DEV_SCENARIOS, SAMPLE_RATE, TRAIN_SCENARIOS, _active_rms,
+    _add_noise, _write_pcm16_and_reload, scenario_plan, simulated_farfield_rir,
+    split_speakers, transform_intervals)
 
 
 def test_scenario_plan_is_exact_and_deterministic():
@@ -64,8 +64,21 @@ def test_farfield_rir_and_active_snr():
   assert metadata['snr_db'] == 0.0
 
 
+def test_features_are_computed_from_persisted_pcm16():
+  from features import PvadFeatureExtractor, load_audio
+
+  waveform = torch.linspace(-0.99, 0.99, SAMPLE_RATE)
+  with tempfile.TemporaryDirectory() as directory:
+    path = Path(directory) / 'mixture.wav'
+    stored = _write_pcm16_and_reload(path, waveform)
+    generated = PvadFeatureExtractor().extract(stored)
+    reconstructed = PvadFeatureExtractor().extract(load_audio(path))
+  torch.testing.assert_close(generated, reconstructed, rtol=0.0, atol=0.0)
+
+
 if __name__ == '__main__':
   test_scenario_plan_is_exact_and_deterministic()
   test_speaker_split_and_interval_transform()
   test_farfield_rir_and_active_snr()
+  test_features_are_computed_from_persisted_pcm16()
   print('review data tests ok')
