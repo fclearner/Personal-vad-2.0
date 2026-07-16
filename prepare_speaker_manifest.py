@@ -45,8 +45,9 @@ def partition_speakers(speakers, train_count, dev_count, test_count, seed):
       'dev': dev_count,
       'test': test_count,
   }
-  if any(count <= 0 for count in counts.values()):
-    raise ValueError('train/dev/test speaker counts must all be positive.')
+  if train_count <= 0 or dev_count <= 0 or test_count < 0:
+    raise ValueError(
+        'train/dev counts must be positive and test count non-negative.')
   if sum(counts.values()) != len(names):
     raise ValueError(
         f'Speaker counts sum to {sum(counts.values())}, '

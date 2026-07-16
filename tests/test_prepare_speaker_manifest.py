@@ -53,6 +53,9 @@ def test_multiple_roots_and_deterministic_partitions():
         row['eligible_for_mixing'] for row in records
         if row['split'] == 'test')
 
+    no_test = partition_speakers(speakers, 8, 2, 0, seed=17)
+    assert no_test['test'] == []
+
 
 def test_duplicate_speaker_across_roots_is_rejected():
   with tempfile.TemporaryDirectory() as directory:

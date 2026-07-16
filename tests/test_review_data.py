@@ -12,8 +12,8 @@ sys.path.insert(0, str(ROOT))
 
 from generate_review_set import (
     DEV_SCENARIOS, SAMPLE_RATE, TRAIN_SCENARIOS, _active_rms,
-    _add_noise, _write_pcm16_and_reload, scenario_plan, simulated_farfield_rir,
-    split_speakers, transform_intervals)
+    _add_noise, _write_pcm16_and_reload, scaled_scenario_counts, scenario_plan,
+    simulated_farfield_rir, split_speakers, transform_intervals)
 
 
 def test_scenario_plan_is_exact_and_deterministic():
@@ -24,6 +24,15 @@ def test_scenario_plan_is_exact_and_deterministic():
   assert len(first['dev']) == 20
   assert Counter(first['train']) == Counter(TRAIN_SCENARIOS)
   assert Counter(first['dev']) == Counter(DEV_SCENARIOS)
+
+  pilot = scenario_plan(17, train_samples=800, dev_samples=200)
+  assert len(pilot['train']) == 800
+  assert len(pilot['dev']) == 200
+  assert Counter(pilot['train']) == {
+      scenario: count * 10 for scenario, count in TRAIN_SCENARIOS.items()}
+  assert Counter(pilot['dev']) == {
+      scenario: count * 10 for scenario, count in DEV_SCENARIOS.items()}
+  assert sum(scaled_scenario_counts(TRAIN_SCENARIOS, 83).values()) == 83
 
 
 def test_speaker_split_and_interval_transform():

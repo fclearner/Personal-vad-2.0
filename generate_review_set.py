@@ -14,6 +14,8 @@ import torchaudio
 
 from features import (PvadFeatureConfig, PvadFeatureExtractor, load_audio,
                       labels_from_intervals)
+from prepare_speaker_manifest import (
+    discover_speaker_wavs, partition_speakers)
 from speaker_backends.modelscope_export import (
     aggregate_embeddings, load_pipeline as load_speaker_pipeline)
 
@@ -43,11 +45,30 @@ DEV_SCENARIOS = {
 }
 
 
-def scenario_plan(seed):
+def scaled_scenario_counts(weights, sample_count):
+  """Scale scenario weights to an exact sample count deterministically."""
+
+  if sample_count <= 0:
+    raise ValueError('sample_count must be positive.')
+  total_weight = sum(weights.values())
+  counts = {}
+  remainders = []
+  for order, (scenario, weight) in enumerate(weights.items()):
+    count, remainder = divmod(sample_count * weight, total_weight)
+    counts[scenario] = count
+    remainders.append((remainder, -order, scenario))
+  missing = sample_count - sum(counts.values())
+  for _, _, scenario in sorted(remainders, reverse=True)[:missing]:
+    counts[scenario] += 1
+  return counts
+
+
+def scenario_plan(seed, train_samples=80, dev_samples=20):
   rng = random.Random(seed)
   result = {}
   for split, counts in (
-      ('train', TRAIN_SCENARIOS), ('dev', DEV_SCENARIOS)):
+      ('train', scaled_scenario_counts(TRAIN_SCENARIOS, train_samples)),
+      ('dev', scaled_scenario_counts(DEV_SCENARIOS, dev_samples))):
     scenarios = [
         scenario for scenario, count in counts.items() for _ in range(count)]
     rng.shuffle(scenarios)
@@ -284,13 +305,14 @@ class ReviewSetGenerator:
         self.embedding_dir, self.plot_dir):
       directory.mkdir(parents=True, exist_ok=True)
 
-    self.speaker_wavs = {}
-    for directory in sorted(Path(args.aishell_wav_root).glob('S*')):
-      wavs = sorted(directory.glob('*.wav'))
-      if len(wavs) >= 6:
-        self.speaker_wavs[directory.name] = wavs
-    self.train_speakers, self.dev_speakers = split_speakers(
-        self.speaker_wavs, train_count=args.train_speakers)
+    self.speaker_wavs = discover_speaker_wavs(
+        args.aishell_wav_root, min_utterances=args.min_utterances)
+    partitions = partition_speakers(
+        self.speaker_wavs, args.train_speakers, args.dev_speakers,
+        args.test_speakers, args.seed)
+    self.train_speakers = partitions['train']
+    self.dev_speakers = partitions['dev']
+    self.test_speakers = partitions['test']
     self.enrollment = {
         speaker: wavs[:2] for speaker, wavs in self.speaker_wavs.items()}
     self.current = {
@@ -326,7 +348,8 @@ class ReviewSetGenerator:
 
   def _export_embeddings(self):
     paths = {}
-    for speaker in sorted(self.speaker_wavs):
+    active_speakers = sorted(self.train_speakers + self.dev_speakers)
+    for speaker in active_speakers:
       vector = _speaker_embedding(
           self.sv_pipeline, self.enrollment[speaker])
       output = self.embedding_dir / f'{speaker}.npy'
@@ -501,7 +524,8 @@ class ReviewSetGenerator:
     return recipe, manifest
 
   def run(self):
-    plans = scenario_plan(self.args.seed)
+    plans = scenario_plan(
+        self.args.seed, self.args.train_samples, self.args.dev_samples)
     recipes = []
     manifests = {'train': [], 'dev': []}
     total_counts = Counter()
@@ -536,19 +560,28 @@ class ReviewSetGenerator:
         json.dumps(self.vad_cache, ensure_ascii=False, indent=2),
         encoding='utf-8')
     inventory = {
-        'aishell_wav_root': str(Path(self.args.aishell_wav_root).resolve()),
+        'aishell_wav_roots': [
+            str(Path(root).resolve()) for root in self.args.aishell_wav_root],
         'wham_root': str(Path(self.args.wham_root).resolve()),
         'tts_root': str(Path(self.args.tts_root).resolve()),
         'train_speakers': self.train_speakers,
         'dev_speakers': self.dev_speakers,
-        'speaker_overlap': sorted(
-            set(self.train_speakers) & set(self.dev_speakers)),
+        'test_speakers': self.test_speakers,
+        'speaker_overlap': {
+            'train_dev': sorted(
+                set(self.train_speakers) & set(self.dev_speakers)),
+            'train_test': sorted(
+                set(self.train_speakers) & set(self.test_speakers)),
+            'dev_test': sorted(
+                set(self.dev_speakers) & set(self.test_speakers)),
+        },
         'enrollment': {
             speaker: [str(path.resolve()) for path in paths]
             for speaker, paths in self.enrollment.items()},
         'current_candidate_counts': {
             speaker: len(paths) for speaker, paths in self.current.items()},
-        'test_policy': 'No official AISHELL test speaker/audio was downloaded.',
+        'test_policy': (
+            'Held-out test speakers are inventoried but never mixed or embedded.'),
     }
     (self.output_dir / 'source_inventory.json').write_text(
         json.dumps(inventory, ensure_ascii=False, indent=2),
@@ -562,6 +595,7 @@ class ReviewSetGenerator:
             for (split, scenario), count in sorted(scenario_counts.items())},
         'class_frame_counts': dict(sorted(total_counts.items())),
         'speaker_overlap': inventory['speaker_overlap'],
+        'heldout_test_speakers': len(self.test_speakers),
         'feature_dim': self.feature_extractor.config.output_dim,
         'embedding_dim': int(np.load(
             next(iter(self.embedding_paths.values()))).size),
@@ -574,8 +608,10 @@ class ReviewSetGenerator:
 
 def parse_args():
   parser = argparse.ArgumentParser(
-      description='Generate the deterministic 100-item Personal VAD review set.')
-  parser.add_argument('--aishell-wav-root', required=True)
+      description='Generate deterministic Personal VAD mixtures.')
+  parser.add_argument(
+      '--aishell-wav-root', action='append', required=True,
+      help='Speaker wav root; repeat for additional non-overlapping roots.')
   parser.add_argument('--wham-root', required=True)
   parser.add_argument('--tts-root', required=True)
   parser.add_argument('--vad-model', required=True)
@@ -583,6 +619,11 @@ def parse_args():
   parser.add_argument('--output-dir', required=True)
   parser.add_argument('--seed', type=int, default=20260716)
   parser.add_argument('--train-speakers', type=int, default=8)
+  parser.add_argument('--dev-speakers', type=int, default=4)
+  parser.add_argument('--test-speakers', type=int, default=0)
+  parser.add_argument('--train-samples', type=int, default=80)
+  parser.add_argument('--dev-samples', type=int, default=20)
+  parser.add_argument('--min-utterances', type=int, default=6)
   return parser.parse_args()
 
 
