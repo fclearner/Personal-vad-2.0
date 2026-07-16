@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 
 from dataset import (DEFAULT_IGNORE_INDEX, PvadManifestDataset,
                      SyntheticPvadDataset, collate_pvad_batch)
+from metrics import ClassificationAccumulator, DEFAULT_CLASS_NAMES
 from model.pvad2 import Pvad2
 
 
@@ -33,6 +34,12 @@ def parse_args():
   parser.add_argument('--seed', type=int, default=0)
   parser.add_argument('--amp', action='store_true',
                       help='Use CUDA automatic mixed precision.')
+  parser.add_argument('--max-steps-per-epoch', type=int, default=None,
+                      help='Optional bounded debug step count per epoch.')
+  parser.add_argument('--selection-metric',
+                      choices=('loss', 'macro_f1', 'target_f1'),
+                      default='target_f1',
+                      help='Metric used to select best.pt.')
 
   parser.add_argument('--input-dim', type=int, default=512)
   parser.add_argument('--encoder-dim', type=int, default=64)
@@ -143,24 +150,18 @@ def align_targets_to_logits(labels, logits, ignore_index):
   return torch.cat([labels, pad], dim=1)
 
 
-def frame_accuracy(logits, labels, ignore_index):
-  valid = labels.ne(ignore_index)
-  total = valid.sum().item()
-  if total == 0:
-    return 0, 0
-  predictions = logits.argmax(dim=-1)
-  correct = (predictions.eq(labels) & valid).sum().item()
-  return correct, total
-
-
 def run_epoch(model, loader, criterion, optimizer, scaler, device, args,
               training):
   model.train(training)
   total_loss = 0.0
   total_frames = 0
-  total_correct = 0
+  accumulator = ClassificationAccumulator(
+      num_classes=args.num_classes, target_class=args.target_class)
 
-  for batch in loader:
+  for step, batch in enumerate(loader):
+    if (args.max_steps_per_epoch is not None
+        and step >= args.max_steps_per_epoch):
+      break
     features = batch['features'].to(device)
     labels = batch['labels'].to(device)
     embeddings = batch['embeddings'].to(device)
@@ -174,7 +175,7 @@ def run_epoch(model, loader, criterion, optimizer, scaler, device, args,
 
     with torch.set_grad_enabled(training):
       amp_enabled = args.amp and device.type == 'cuda'
-      with torch.cuda.amp.autocast(enabled=amp_enabled):
+      with torch.amp.autocast('cuda', enabled=amp_enabled):
         logits, _ = model(features, embeddings, lengths, return_lengths=True)
         labels = align_targets_to_logits(labels, logits, args.ignore_index)
         loss = criterion(logits.reshape(-1, logits.size(-1)),
@@ -189,24 +190,51 @@ def run_epoch(model, loader, criterion, optimizer, scaler, device, args,
         scaler.update()
 
     frames = labels.ne(args.ignore_index).sum().item()
-    correct, total = frame_accuracy(logits.detach(), labels, args.ignore_index)
+    valid = labels.ne(args.ignore_index)
+    detached_logits = logits.detach()
+    probabilities = detached_logits.softmax(dim=-1)
+    accumulator.update(
+        labels[valid].cpu().numpy(),
+        detached_logits.argmax(dim=-1)[valid].cpu().numpy(),
+        probabilities[..., args.target_class][valid].cpu().numpy())
     total_loss += loss.item() * max(frames, 1)
     total_frames += frames
-    total_correct += correct
 
   avg_loss = total_loss / max(total_frames, 1)
-  accuracy = total_correct / max(total_frames, 1)
-  return {'loss': avg_loss, 'accuracy': accuracy, 'frames': total_frames}
+  result = accumulator.compute()
+  result['loss'] = avg_loss
+  return result
+
+
+def selection_score(metrics, selection_metric, target_class=0):
+  if selection_metric == 'loss':
+    return -float(metrics['loss'])
+  if selection_metric == 'macro_f1':
+    value = metrics['macro_f1']
+  elif selection_metric == 'target_f1':
+    class_name = (DEFAULT_CLASS_NAMES[target_class]
+                  if len(DEFAULT_CLASS_NAMES) == len(metrics['per_class'])
+                  else f'class_{target_class}')
+    value = metrics['per_class'][class_name]['f1']
+  else:
+    raise ValueError(f'Unknown selection metric: {selection_metric}')
+  return -math.inf if value is None else float(value)
+
+
+def format_metric(value):
+  return 'n/a' if value is None else f'{value:.4f}'
 
 
 def save_checkpoint(path, model, optimizer, epoch, train_metrics, valid_metrics,
-                    args):
+                    best_selection_score, args):
   package = Pvad2.serialize(model, optimizer=optimizer, epoch=epoch,
                             tr_loss=train_metrics['loss'],
                             cv_loss=(valid_metrics or {}).get('loss'))
   package['args'] = vars(args)
   package['train_metrics'] = train_metrics
   package['valid_metrics'] = valid_metrics
+  package['selection_metric'] = args.selection_metric
+  package['best_selection_score'] = best_selection_score
   torch.save(package, path)
 
 
@@ -217,6 +245,8 @@ def append_metrics(path, row):
 
 def main():
   args = parse_args()
+  if args.max_steps_per_epoch is not None and args.max_steps_per_epoch <= 0:
+    raise ValueError('--max-steps-per-epoch must be greater than zero.')
   torch.manual_seed(args.seed)
   device = resolve_device(args.device)
   output_dir = Path(args.output_dir)
@@ -230,17 +260,18 @@ def main():
   optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr,
                                 weight_decay=args.weight_decay)
   criterion = nn.CrossEntropyLoss(ignore_index=args.ignore_index)
-  scaler = torch.cuda.amp.GradScaler(enabled=args.amp and device.type == 'cuda')
+  scaler = torch.amp.GradScaler('cuda', enabled=args.amp and device.type == 'cuda')
 
   start_epoch = 1
-  best_valid = math.inf
+  best_selection_score = -math.inf
   if args.resume:
     checkpoint = torch.load(args.resume, map_location=device)
     model.load_state_dict(checkpoint['state_dict'])
     if 'optim_dict' in checkpoint:
       optimizer.load_state_dict(checkpoint['optim_dict'])
     start_epoch = int(checkpoint.get('epoch', 0)) + 1
-    best_valid = float(checkpoint.get('best_valid', best_valid))
+    best_selection_score = float(checkpoint.get(
+        'best_selection_score', best_selection_score))
 
   metrics_path = output_dir / 'metrics.jsonl'
   for epoch in range(start_epoch, args.epochs + 1):
@@ -253,21 +284,31 @@ def main():
 
     row = {'epoch': epoch, 'train': train_metrics, 'valid': valid_metrics}
     append_metrics(metrics_path, row)
+    selection_metrics = valid_metrics or train_metrics
+    score = selection_score(selection_metrics, args.selection_metric,
+                            args.target_class)
+    is_best = score > best_selection_score
+    if is_best:
+      best_selection_score = score
     save_checkpoint(output_dir / 'last.pt', model, optimizer, epoch,
-                    train_metrics, valid_metrics, args)
+                    train_metrics, valid_metrics, best_selection_score, args)
 
-    valid_loss = valid_metrics['loss'] if valid_metrics else train_metrics['loss']
-    if valid_loss < best_valid:
-      best_valid = valid_loss
+    if is_best:
       save_checkpoint(output_dir / 'best.pt', model, optimizer, epoch,
-                      train_metrics, valid_metrics, args)
+                      train_metrics, valid_metrics, best_selection_score, args)
 
     valid_text = ''
     if valid_metrics:
-      valid_text = (f" valid_loss={valid_metrics['loss']:.4f}"
-                    f" valid_acc={valid_metrics['accuracy']:.4f}")
-    print(f"epoch={epoch} train_loss={train_metrics['loss']:.4f}"
-          f" train_acc={train_metrics['accuracy']:.4f}{valid_text}")
+      valid_text = (f" valid_loss={format_metric(valid_metrics['loss'])}"
+                    f" valid_acc={format_metric(valid_metrics['accuracy'])}"
+                    f" valid_macro_f1={format_metric(valid_metrics['macro_f1'])}"
+                    f" valid_target_f1="
+                    f"{format_metric(valid_metrics['per_class']['target']['f1'])}")
+    print(f"epoch={epoch} train_loss={format_metric(train_metrics['loss'])}"
+          f" train_acc={format_metric(train_metrics['accuracy'])}"
+          f" train_macro_f1={format_metric(train_metrics['macro_f1'])}"
+          f" train_target_f1="
+          f"{format_metric(train_metrics['per_class']['target']['f1'])}{valid_text}")
 
 
 if __name__ == '__main__':
