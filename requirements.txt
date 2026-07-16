@@ -1,2 +1,3 @@
 torch>=1.13
 numpy>=1.21
+torchaudio>=2.1
