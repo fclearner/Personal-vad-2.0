@@ -24,6 +24,9 @@ def test_paper_dimensions_and_timing():
           timing[0].decision_start_sample,
           timing[0].decision_end_sample) == (0, 480, 992)
   assert timing[1].decision_start_sample - timing[0].decision_start_sample == 480
+  timing_slice = extractor.frame_timing(2, start_index=2)
+  assert [frame.index for frame in timing_slice] == [2, 3]
+  assert timing_slice == extractor.frame_timing(4)[2:]
 
 
 def test_streaming_matches_offline_for_irregular_chunks():

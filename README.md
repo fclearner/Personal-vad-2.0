@@ -67,6 +67,38 @@ The training loop implements the enrollment-less paradigm from the paper:
 with `--enrollment-drop-prob 0.2`, a sampled utterance has its speaker embedding
 replaced with zeros and its non-target speech labels (`1`) rewritten to target
 speech (`0`). Checkpoints are written to `last.pt` and `best.pt`.
+By default, `best.pt` is selected by validation target-class F1 rather than
+loss. `--selection-metric macro_f1` and `--selection-metric loss` are
+available for controlled comparisons. Metrics include all three per-class
+precision/recall/F1/support values, a confusion matrix, macro-F1, and
+target-vs-rest approximate PR/ROC summaries. `--max-steps-per-epoch` bounds
+20-step batch-size and stability checks without starting a long run.
+
+## Streaming Inference
+
+`PvadStreamingAdapter` accepts arbitrary mono-audio chunks and returns aligned
+three-class logits/probabilities. The audio frontend already applies factor-three
+time subsampling, so the corresponding model must use `subsampling='linear'`.
+Each Conformer layer keeps bounded attention K/V and causal-convolution caches.
+
+```python
+import torch
+
+from model import Pvad2
+from streaming import PvadStreamingAdapter
+
+model = Pvad2.load_model('best.pt').eval()
+embedding = torch.from_numpy(campplus_embedding)
+adapter = PvadStreamingAdapter(
+    model, embedding, device='cuda', measure_rtf=False)
+output = adapter.feed_audio(mono_pcm_chunk)
+target_probability = output.probabilities[:, 0]
+```
+
+Set `measure_rtf=True` only for benchmarking: CUDA synchronization is then
+included in the reported cumulative real-time factor. Call `reset()` at an
+utterance/session boundary; changing batch size or reusing caches across
+independent audio is rejected.
 
 ## Speaker Embeddings
 

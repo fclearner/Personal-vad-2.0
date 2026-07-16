@@ -172,9 +172,12 @@ class PvadFeatureExtractor:
   def extract(self, waveform: torch.Tensor) -> torch.Tensor:
     return PvadFeatureExtractor(self.config, self.device).feed(waveform)
 
-  def frame_timing(self, count: int) -> list[FeatureFrame]:
+  def frame_timing(self, count: int,
+                   start_index: int = 0) -> list[FeatureFrame]:
+    if count < 0 or start_index < 0:
+      raise ValueError('count and start_index must be non-negative.')
     timings = []
-    for index in range(count):
+    for index in range(start_index, start_index + count):
       stack_base = index * self.config.subsample_factor
       decision_base = stack_base + self.config.stack_frames - 1
       decision_start = decision_base * self.config.frame_shift_samples

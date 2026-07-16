@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -8,6 +10,15 @@ from .conformer import ConformerBlock
 from .film import FiLM
 from .subsampling import Conv2dSubsampling3, LinearNoSubsampling
 from .utils import make_pad_mask
+
+
+@dataclass(frozen=True)
+class PvadStreamingState:
+  offset: int
+  encoder_att_caches: tuple[Tensor, ...]
+  encoder_cnn_caches: tuple[Tensor, ...]
+  speaker_att_caches: tuple[Tensor, ...]
+  speaker_cnn_caches: tuple[Tensor, ...]
 
 
 class Pvad2(nn.Module):
