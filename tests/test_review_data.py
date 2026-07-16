@@ -1,4 +1,5 @@
 from collections import Counter
+import json
 from pathlib import Path
 import random
 import sys
@@ -12,8 +13,9 @@ sys.path.insert(0, str(ROOT))
 
 from generate_review_set import (
     DEV_SCENARIOS, SAMPLE_RATE, TRAIN_SCENARIOS, _active_rms,
-    _add_noise, _write_pcm16_and_reload, scaled_scenario_counts, scenario_plan,
-    simulated_farfield_rir, split_speakers, transform_intervals)
+    _add_noise, _write_pcm16_and_reload, load_source_partitions,
+    scaled_scenario_counts, scenario_plan, simulated_farfield_rir,
+    split_speakers, transform_intervals)
 
 
 def test_scenario_plan_is_exact_and_deterministic():
@@ -83,6 +85,22 @@ def test_features_are_computed_from_persisted_pcm16():
     generated = PvadFeatureExtractor().extract(stored)
     reconstructed = PvadFeatureExtractor().extract(load_audio(path))
   torch.testing.assert_close(generated, reconstructed, rtol=0.0, atol=0.0)
+
+
+def test_source_manifest_partitions_are_loaded_exactly():
+  speakers = {f'S{index:04d}': () for index in range(2, 7)}
+  payload = {
+      'partitions': {
+          'train': ['S0004', 'S0002'],
+          'dev': ['S0005'],
+          'test': ['S0003'],
+      }}
+  with tempfile.TemporaryDirectory() as directory:
+    path = Path(directory) / 'speaker_split.json'
+    path.write_text(json.dumps(payload), encoding='utf-8')
+    selected, partitions = load_source_partitions(path, speakers)
+  assert set(selected) == {'S0002', 'S0003', 'S0004', 'S0005'}
+  assert partitions == payload['partitions']
 
 
 if __name__ == '__main__':

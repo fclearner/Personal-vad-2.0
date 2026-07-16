@@ -15,7 +15,7 @@ import torchaudio
 from features import (PvadFeatureConfig, PvadFeatureExtractor, load_audio,
                       labels_from_intervals)
 from prepare_speaker_manifest import (
-    discover_speaker_wavs, partition_speakers)
+    discover_speaker_wavs, partition_speakers, select_speakers)
 from speaker_backends.modelscope_export import (
     aggregate_embeddings, load_pipeline as load_speaker_pipeline)
 
@@ -85,6 +85,26 @@ def split_speakers(speakers, train_count=8):
   if set(train) & set(dev):
     raise AssertionError('Speaker split leakage detected.')
   return train, dev
+
+
+def load_source_partitions(source_manifest, speakers):
+  """Load and validate exact train/dev/test speakers from a source manifest."""
+
+  path = Path(source_manifest).resolve()
+  if path.is_dir():
+    path = path / 'speaker_split.json'
+  payload = json.loads(path.read_text(encoding='utf-8'))
+  partitions = payload.get('partitions')
+  if set(partitions or {}) != {'train', 'dev', 'test'}:
+    raise ValueError('Source manifest must contain train/dev/test partitions.')
+  flattened = [
+      speaker for split in ('train', 'dev', 'test')
+      for speaker in partitions[split]]
+  if len(flattened) != len(set(flattened)):
+    raise ValueError('Source manifest contains speaker leakage.')
+  selected = select_speakers(speakers, flattened)
+  return selected, {
+      split: list(partitions[split]) for split in ('train', 'dev', 'test')}
 
 
 def transform_intervals(intervals, crop_start, length, offset=0,
@@ -306,11 +326,16 @@ class ReviewSetGenerator:
         self.embedding_dir, self.plot_dir):
       directory.mkdir(parents=True, exist_ok=True)
 
-    self.speaker_wavs = discover_speaker_wavs(
+    discovered_speakers = discover_speaker_wavs(
         args.aishell_wav_root, min_utterances=args.min_utterances)
-    partitions = partition_speakers(
-        self.speaker_wavs, args.train_speakers, args.dev_speakers,
-        args.test_speakers, args.seed)
+    if args.source_manifest:
+      self.speaker_wavs, partitions = load_source_partitions(
+          args.source_manifest, discovered_speakers)
+    else:
+      self.speaker_wavs = discovered_speakers
+      partitions = partition_speakers(
+          self.speaker_wavs, args.train_speakers, args.dev_speakers,
+          args.test_speakers, args.seed)
     self.train_speakers = partitions['train']
     self.dev_speakers = partitions['dev']
     self.test_speakers = partitions['test']
@@ -563,6 +588,9 @@ class ReviewSetGenerator:
         json.dumps(self.vad_cache, ensure_ascii=False, indent=2),
         encoding='utf-8')
     inventory = {
+        'source_manifest': (
+            str(Path(self.args.source_manifest).resolve())
+            if self.args.source_manifest else None),
         'aishell_wav_roots': [
             str(Path(root).resolve()) for root in self.args.aishell_wav_root],
         'wham_root': str(Path(self.args.wham_root).resolve()),
@@ -620,6 +648,9 @@ def parse_args():
   parser.add_argument('--vad-model', required=True)
   parser.add_argument('--campplus-model', required=True)
   parser.add_argument('--output-dir', required=True)
+  parser.add_argument(
+      '--source-manifest',
+      help='Directory or speaker_split.json with exact source partitions.')
   parser.add_argument('--seed', type=int, default=20260716)
   parser.add_argument('--train-speakers', type=int, default=8)
   parser.add_argument('--dev-speakers', type=int, default=4)
