@@ -5,7 +5,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from train import format_metric, selection_score
+from train import format_metric, selection_score, summarize_runtime
 
 
 def test_selection_score_directions_and_missing_target():
@@ -26,6 +26,18 @@ def test_selection_score_directions_and_missing_target():
 
   metrics['per_class']['target']['f1'] = None
   assert selection_score(metrics, 'target_f1') == -math.inf
+
+
+def test_runtime_summary_reports_throughput_and_memory():
+  result = summarize_runtime(
+      elapsed_seconds=2.0, steps=4, examples=8, frames=1600,
+      peak_allocated_bytes=128 * 1024 ** 2,
+      peak_reserved_bytes=256 * 1024 ** 2)
+  assert result['steps_per_second'] == 2.0
+  assert result['examples_per_second'] == 4.0
+  assert result['frames_per_second'] == 800.0
+  assert result['peak_memory_allocated_mb'] == 128.0
+  assert result['peak_memory_reserved_mb'] == 256.0
 
 
 if __name__ == '__main__':

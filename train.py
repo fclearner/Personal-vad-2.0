@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+from time import perf_counter
 
 import torch
 import torch.nn as nn
@@ -150,13 +151,40 @@ def align_targets_to_logits(labels, logits, ignore_index):
   return torch.cat([labels, pad], dim=1)
 
 
+def summarize_runtime(elapsed_seconds, steps, examples, frames,
+                      peak_allocated_bytes=None, peak_reserved_bytes=None):
+  elapsed_seconds = max(float(elapsed_seconds), 1e-12)
+  return {
+      'seconds': elapsed_seconds,
+      'steps': int(steps),
+      'examples': int(examples),
+      'frames': int(frames),
+      'steps_per_second': float(steps / elapsed_seconds),
+      'examples_per_second': float(examples / elapsed_seconds),
+      'frames_per_second': float(frames / elapsed_seconds),
+      'peak_memory_allocated_mb': (
+          None if peak_allocated_bytes is None
+          else float(peak_allocated_bytes / (1024 ** 2))),
+      'peak_memory_reserved_mb': (
+          None if peak_reserved_bytes is None
+          else float(peak_reserved_bytes / (1024 ** 2))),
+  }
+
+
 def run_epoch(model, loader, criterion, optimizer, scaler, device, args,
               training):
   model.train(training)
   total_loss = 0.0
   total_frames = 0
+  total_examples = 0
+  steps = 0
   accumulator = ClassificationAccumulator(
       num_classes=args.num_classes, target_class=args.target_class)
+
+  if device.type == 'cuda':
+    torch.cuda.synchronize(device)
+    torch.cuda.reset_peak_memory_stats(device)
+  started = perf_counter()
 
   for step, batch in enumerate(loader):
     if (args.max_steps_per_epoch is not None
@@ -166,6 +194,8 @@ def run_epoch(model, loader, criterion, optimizer, scaler, device, args,
     labels = batch['labels'].to(device)
     embeddings = batch['embeddings'].to(device)
     lengths = batch['lengths'].to(device)
+    steps += 1
+    total_examples += features.size(0)
 
     if training:
       embeddings, labels = apply_enrollment_dropout(
@@ -201,8 +231,19 @@ def run_epoch(model, loader, criterion, optimizer, scaler, device, args,
     total_frames += frames
 
   avg_loss = total_loss / max(total_frames, 1)
+  if device.type == 'cuda':
+    torch.cuda.synchronize(device)
+    peak_allocated = torch.cuda.max_memory_allocated(device)
+    peak_reserved = torch.cuda.max_memory_reserved(device)
+  else:
+    peak_allocated = None
+    peak_reserved = None
+  elapsed = perf_counter() - started
   result = accumulator.compute()
   result['loss'] = avg_loss
+  result['runtime'] = summarize_runtime(
+      elapsed, steps, total_examples, total_frames,
+      peak_allocated, peak_reserved)
   return result
 
 
@@ -308,7 +349,14 @@ def main():
           f" train_acc={format_metric(train_metrics['accuracy'])}"
           f" train_macro_f1={format_metric(train_metrics['macro_f1'])}"
           f" train_target_f1="
-          f"{format_metric(train_metrics['per_class']['target']['f1'])}{valid_text}")
+          f"{format_metric(train_metrics['per_class']['target']['f1'])}"
+          f" train_steps_per_s="
+          f"{format_metric(train_metrics['runtime']['steps_per_second'])}"
+          f" train_frames_per_s="
+          f"{format_metric(train_metrics['runtime']['frames_per_second'])}"
+          f" peak_allocated_mb="
+          f"{format_metric(train_metrics['runtime']['peak_memory_allocated_mb'])}"
+          f"{valid_text}")
 
 
 if __name__ == '__main__':
