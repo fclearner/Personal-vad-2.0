@@ -64,11 +64,18 @@ def test_speaker_pair_plan_is_deterministic_and_diverse():
 
 
 def test_farfield_rir_and_active_snr():
-  rir = simulated_farfield_rir()
-  assert rir.numel() == round(0.18 * SAMPLE_RATE)
+  rir, metadata = simulated_farfield_rir(random.Random(17))
+  repeated, repeated_metadata = simulated_farfield_rir(random.Random(17))
+  different, _ = simulated_farfield_rir(random.Random(18))
+  torch.testing.assert_close(rir, repeated, rtol=0.0, atol=0.0)
+  assert metadata == repeated_metadata
+  assert not torch.equal(rir, different)
+  assert 1.5 <= metadata['distance_m'] <= 5.0
+  assert 0.15 <= metadata['rt60_seconds'] <= 0.65
+  assert 0 <= metadata['label_tail_samples'] < rir.numel()
   torch.testing.assert_close(
       rir.square().sum(), torch.tensor(1.0), rtol=1e-6, atol=1e-6)
-  assert torch.count_nonzero(rir) == 4
+  assert torch.count_nonzero(rir) > metadata['early_reflections']
 
   mixture = torch.zeros(2000)
   mixture[200:1200] = 0.1

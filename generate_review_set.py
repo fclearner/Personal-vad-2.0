@@ -161,12 +161,49 @@ def transform_intervals(intervals, crop_start, length, offset=0,
   return transformed
 
 
-def simulated_farfield_rir(sample_rate=SAMPLE_RATE):
-  taps = ((0.0, 0.35), (0.035, 0.52), (0.082, 0.34), (0.145, 0.20))
-  impulse = torch.zeros(round(0.18 * sample_rate))
-  for delay, amplitude in taps:
-    impulse[round(delay * sample_rate)] = amplitude
-  return impulse / impulse.square().sum().sqrt()
+def simulated_farfield_rir(rng=None, sample_rate=SAMPLE_RATE):
+  """Sample a deterministic parametric room response and its recipe."""
+
+  rng = rng or random.Random(0)
+  distance_m = rng.uniform(1.5, 5.0)
+  rt60_seconds = rng.uniform(0.15, 0.65)
+  early_reflections = rng.randint(4, 8)
+  room_seed = rng.randrange(2 ** 31)
+  length = max(2, round(rt60_seconds * sample_rate))
+  impulse = torch.zeros(length)
+  direct_amplitude = 1.0 / distance_m
+  impulse[0] = direct_amplitude
+
+  reflection_delays = []
+  for _ in range(early_reflections):
+    delay_seconds = rng.uniform(0.008, min(0.12, rt60_seconds * 0.6))
+    delay_sample = min(length - 1, round(delay_seconds * sample_rate))
+    reflection_delays.append(delay_sample)
+    sign = -1.0 if rng.random() < 0.5 else 1.0
+    decay = math.exp(-6.91 * delay_seconds / rt60_seconds)
+    impulse[delay_sample] += (
+        sign * direct_amplitude * rng.uniform(0.2, 0.7) * decay)
+
+  generator = torch.Generator().manual_seed(room_seed)
+  times = torch.arange(length, dtype=torch.float32) / sample_rate
+  envelope = torch.exp(-6.91 * times / rt60_seconds)
+  late_tail = torch.randn(length, generator=generator) * envelope
+  late_tail[:min(length, round(0.04 * sample_rate))] = 0.0
+  impulse += late_tail * direct_amplitude * 0.015
+  impulse = impulse / impulse.square().sum().clamp_min(1e-12).sqrt()
+  audible = torch.nonzero(
+      impulse.abs() >= impulse.abs().max() * 0.01, as_tuple=False)
+  label_tail_samples = int(audible[-1]) if audible.numel() else 0
+  metadata = {
+      'distance_m': distance_m,
+      'rt60_seconds': rt60_seconds,
+      'early_reflections': early_reflections,
+      'reflection_delay_samples': sorted(reflection_delays),
+      'room_seed': room_seed,
+      'rir_samples': length,
+      'label_tail_samples': label_tail_samples,
+  }
+  return impulse, metadata
 
 
 def _active_rms(waveform, intervals):
@@ -221,14 +258,19 @@ def _prepare_source(audio_path, intervals):
 
 
 def _place_speech(audio_path, intervals, offset_samples, level_dbfs,
-                  farfield=False):
+                  farfield=False, rir_rng=None):
   waveform, intervals, crop_start = _prepare_source(audio_path, intervals)
   rir_tail = 0
+  rir_metadata = None
   if farfield:
-    rir = simulated_farfield_rir()
+    rir, rir_metadata = simulated_farfield_rir(rir_rng)
     waveform = torchaudio.functional.fftconvolve(
         waveform, rir, mode='full')
-    rir_tail = rir.numel() - 1
+    rir_tail = rir_metadata['label_tail_samples']
+    if level_dbfs is None:
+      level_dbfs = -18.0 - 20.0 * math.log10(rir_metadata['distance_m'])
+  if level_dbfs is None:
+    raise ValueError('level_dbfs may only be omitted for farfield speech.')
   active_rms = _active_rms(waveform, intervals)
   desired = 10.0 ** (level_dbfs / 20.0)
   scale = desired / float(active_rms)
@@ -252,6 +294,7 @@ def _place_speech(audio_path, intervals, offset_samples, level_dbfs,
       'linear_gain': scale,
       'farfield_rir': farfield,
       'rir_tail_samples': rir_tail,
+      'rir_profile': rir_metadata,
       'speech_intervals_samples': [list(item) for item in placed_intervals],
   }
   return placed, placed_intervals, metadata
@@ -456,7 +499,7 @@ class ReviewSetGenerator:
       nonlocal mixture
       audio, intervals, metadata = _place_speech(
           path, source_intervals, round(offset_seconds * SAMPLE_RATE),
-          level_dbfs, farfield)
+          level_dbfs, farfield, self.rng if farfield else None)
       mixture = mixture + audio
       metadata.update({'role': role, 'speaker_id': speaker_id})
       components.append(metadata)
@@ -477,7 +520,7 @@ class ReviewSetGenerator:
           speaker_id=non_target_speaker)
     elif scenario == 'non_target_far':
       add_speech(
-          'non_target', non_target_path, non_target_vad, 1.0, -25.0,
+          'non_target', non_target_path, non_target_vad, 1.0, None,
           farfield=True, speaker_id=non_target_speaker)
     elif scenario == 'overlap':
       sir_db = self.rng.choice((-5.0, 0.0, 5.0))
