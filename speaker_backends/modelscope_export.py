@@ -7,6 +7,27 @@ import numpy as np
 DEFAULT_MODEL_ID = 'iic/speech_campplus_sv_zh-cn_16k-common'
 
 
+def l2_normalize(embedding, eps=1e-12):
+  """Return a float32 unit vector and reject degenerate embeddings."""
+  embedding = np.asarray(embedding, dtype=np.float32).reshape(-1)
+  if embedding.size == 0:
+    raise ValueError('Cannot normalize an empty embedding.')
+  norm = float(np.linalg.norm(embedding))
+  if not np.isfinite(norm) or norm <= eps:
+    raise ValueError('Cannot normalize a zero or non-finite embedding.')
+  return embedding / norm
+
+
+def aggregate_embeddings(embeddings):
+  """L2-normalize each enrollment, average, then normalize the result."""
+  matrix = np.asarray(embeddings, dtype=np.float32)
+  if matrix.ndim != 2 or matrix.shape[0] == 0:
+    raise ValueError('embeddings must have shape (utterances, dimensions).')
+  normalized = np.stack(
+      [l2_normalize(embedding) for embedding in matrix], axis=0)
+  return l2_normalize(normalized.mean(axis=0))
+
+
 def parse_args():
   parser = argparse.ArgumentParser(
       description='Export speaker embeddings with a ModelScope SV model.')
@@ -19,6 +40,10 @@ def parse_args():
                       help='Directory where .npy embeddings will be written.')
   parser.add_argument('--suffix', default='.spk.npy',
                       help='Suffix appended to each audio stem.')
+  parser.add_argument('--normalize', action=argparse.BooleanOptionalAction,
+                      default=True, help='L2-normalize exported embeddings.')
+  parser.add_argument('--aggregate-output', default='',
+                      help='Optional filename for the normalized group mean.')
   return parser.parse_args()
 
 
@@ -34,7 +59,7 @@ def load_pipeline(model):
   return pipeline(task=Tasks.speaker_verification, model=model)
 
 
-def export_embeddings(model, audio_paths, output_dir, suffix):
+def export_embeddings(model, audio_paths, output_dir, suffix, normalize=True):
   output_dir = Path(output_dir)
   output_dir.mkdir(parents=True, exist_ok=True)
   sv_pipeline = load_pipeline(model)
@@ -49,18 +74,27 @@ def export_embeddings(model, audio_paths, output_dir, suffix):
           f'Expected one embedding for {audio_path}, got {embedding.shape}.')
 
     output_path = output_dir / f'{audio_path.stem}{suffix}'
-    np.save(output_path, embedding[0])
-    written.append((audio_path, output_path, embedding.shape[1]))
+    vector = l2_normalize(embedding[0]) if normalize else embedding[0]
+    np.save(output_path, vector)
+    written.append((audio_path, output_path, vector.size))
 
   return written
 
 
 def main():
   args = parse_args()
-  written = export_embeddings(args.model, args.audio, args.output_dir,
-                              args.suffix)
+  written = export_embeddings(
+      args.model, args.audio, args.output_dir, args.suffix,
+      normalize=args.normalize)
   for audio_path, output_path, dim in written:
-    print(f'{audio_path} -> {output_path} ({dim} dims)')
+    vector = np.load(output_path)
+    print(f'{audio_path} -> {output_path} ({dim} dims, '
+          f'norm={np.linalg.norm(vector):.6f})')
+  if args.aggregate_output:
+    aggregate = aggregate_embeddings([np.load(item[1]) for item in written])
+    aggregate_path = Path(args.output_dir) / args.aggregate_output
+    np.save(aggregate_path, aggregate)
+    print(f'aggregate -> {aggregate_path} (norm={np.linalg.norm(aggregate):.6f})')
 
 
 if __name__ == '__main__':
