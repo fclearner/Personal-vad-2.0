@@ -13,7 +13,8 @@ sys.path.insert(0, str(ROOT))
 
 from generate_review_set import (
     DEV_SCENARIOS, SAMPLE_RATE, TRAIN_SCENARIOS, _active_rms,
-    _add_noise, _write_pcm16_and_reload, load_source_partitions,
+    _add_noise, _write_pcm16_and_reload, discover_tts_wavs,
+    load_source_partitions,
     scaled_scenario_counts, scenario_plan, simulated_farfield_rir,
     split_speakers, transform_intervals)
 
@@ -101,6 +102,17 @@ def test_source_manifest_partitions_are_loaded_exactly():
     selected, partitions = load_source_partitions(path, speakers)
   assert set(selected) == {'S0002', 'S0003', 'S0004', 'S0005'}
   assert partitions == payload['partitions']
+
+
+def test_tts_sources_are_split_by_train_and_dev():
+  with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    for split in ('train', 'dev'):
+      (root / split).mkdir()
+      (root / split / f'response-{split}.wav').touch()
+    sources = discover_tts_wavs(root)
+  assert [path.name for path in sources['train']] == ['response-train.wav']
+  assert [path.name for path in sources['dev']] == ['response-dev.wav']
 
 
 if __name__ == '__main__':

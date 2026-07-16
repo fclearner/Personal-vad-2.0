@@ -107,6 +107,24 @@ def load_source_partitions(source_manifest, speakers):
       split: list(partitions[split]) for split in ('train', 'dev', 'test')}
 
 
+def discover_tts_wavs(tts_root):
+  """Require disjoint persisted Qwen response WAVs for train and dev."""
+
+  root = Path(tts_root).resolve()
+  result = {
+      split: sorted((root / split).glob('response-*.wav'))
+      for split in ('train', 'dev')}
+  for split, paths in result.items():
+    if not paths:
+      raise ValueError(f'TTS {split} response WAVs are required in {root / split}.')
+  resolved = {
+      split: {str(path.resolve()) for path in paths}
+      for split, paths in result.items()}
+  if resolved['train'] & resolved['dev']:
+    raise ValueError('TTS train/dev audio leakage detected.')
+  return result
+
+
 def transform_intervals(intervals, crop_start, length, offset=0,
                         tail_samples=0):
   transformed = []
@@ -356,11 +374,9 @@ class ReviewSetGenerator:
         'train': sorted((Path(args.wham_root) / 'tr').glob('*.wav')),
         'dev': sorted((Path(args.wham_root) / 'cv').glob('*.wav')),
     }
-    self.tts = sorted(Path(args.tts_root).glob('response-*.wav'))
+    self.tts = discover_tts_wavs(args.tts_root)
     if not self.wham['train'] or not self.wham['dev']:
       raise ValueError('WHAM train/cv noise files are required.')
-    if not self.tts:
-      raise ValueError('At least one persisted response-*.wav is required.')
 
     self.vad_cache_path = self.output_dir / 'vad_cache.json'
     self.vad_cache = {}
@@ -397,8 +413,9 @@ class ReviewSetGenerator:
         continue
     raise RuntimeError(f'No VAD-positive current audio for {speaker}.')
 
-  def _tts_source(self, sample_index):
-    path = self.tts[sample_index % len(self.tts)]
+  def _tts_source(self, split, sample_index):
+    paths = self.tts[split]
+    path = paths[sample_index % len(paths)]
     return path, _vad_intervals(self.vad_pipeline, path, self.vad_cache)
 
   def _build_one(self, split, scenario, sample_index, speakers):
@@ -447,7 +464,7 @@ class ReviewSetGenerator:
           'non_target', non_target_path, non_target_vad, 1.4,
           -20.0 - sir_db, speaker_id=non_target_speaker)
     elif scenario in {'tts_echo', 'target_tts_overlap'}:
-      tts_path, tts_vad = self._tts_source(sample_index)
+      tts_path, tts_vad = self._tts_source(split, sample_index)
       add_speech(
           'non_target', tts_path, tts_vad,
           0.8 if scenario == 'tts_echo' else 1.5,
@@ -595,6 +612,9 @@ class ReviewSetGenerator:
             str(Path(root).resolve()) for root in self.args.aishell_wav_root],
         'wham_root': str(Path(self.args.wham_root).resolve()),
         'tts_root': str(Path(self.args.tts_root).resolve()),
+        'tts_sources': {
+            split: [str(path.resolve()) for path in paths]
+            for split, paths in self.tts.items()},
         'train_speakers': self.train_speakers,
         'dev_speakers': self.dev_speakers,
         'test_speakers': self.test_speakers,
