@@ -16,7 +16,7 @@ from generate_review_set import (
     _add_noise, _write_pcm16_and_reload, discover_tts_wavs,
     load_source_partitions,
     scaled_scenario_counts, scenario_plan, simulated_farfield_rir,
-    split_speakers, transform_intervals)
+    speaker_pair_plan, split_speakers, transform_intervals)
 
 
 def test_scenario_plan_is_exact_and_deterministic():
@@ -49,6 +49,18 @@ def test_speaker_split_and_interval_transform():
       [(100, 300), (400, 900)], crop_start=200, length=500,
       offset=50, tail_samples=20)
   assert transformed == [(50, 170), (250, 570)]
+
+
+def test_speaker_pair_plan_is_deterministic_and_diverse():
+  speakers = [f'S{index:04d}' for index in range(2, 12)]
+  first = speaker_pair_plan(speakers, 25, seed=17)
+  second = speaker_pair_plan(speakers, 25, seed=17)
+  assert first == second
+  assert all(target != non_target for target, non_target in first)
+  assert {target for target, _ in first[:10]} == set(speakers)
+  target_counts = Counter(target for target, _ in first)
+  assert set(target_counts.values()) == {2, 3}
+  assert len(set(first)) >= 20
 
 
 def test_farfield_rir_and_active_snr():

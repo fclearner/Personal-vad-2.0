@@ -76,6 +76,28 @@ def scenario_plan(seed, train_samples=80, dev_samples=20):
   return result
 
 
+def speaker_pair_plan(speakers, sample_count, seed):
+  """Build deterministic, diverse target/non-target pairs by full cycles."""
+
+  speakers = sorted(speakers)
+  if len(speakers) < 2:
+    raise ValueError('At least two speakers are required for pairing.')
+  if sample_count <= 0:
+    raise ValueError('sample_count must be positive.')
+  pairs = []
+  cycle = 0
+  while len(pairs) < sample_count:
+    order = list(speakers)
+    random.Random(seed + cycle * 2).shuffle(order)
+    offset = 1 + random.Random(seed + cycle * 2 + 1).randrange(
+        len(order) - 1)
+    pairs.extend(
+        (target, order[(index + offset) % len(order)])
+        for index, target in enumerate(order))
+    cycle += 1
+  return pairs[:sample_count]
+
+
 def split_speakers(speakers, train_count=8):
   speakers = sorted(speakers)
   if len(speakers) <= train_count:
@@ -418,9 +440,8 @@ class ReviewSetGenerator:
     path = paths[sample_index % len(paths)]
     return path, _vad_intervals(self.vad_pipeline, path, self.vad_cache)
 
-  def _build_one(self, split, scenario, sample_index, speakers):
-    target_speaker = speakers[sample_index % len(speakers)]
-    non_target_speaker = speakers[(sample_index + 1) % len(speakers)]
+  def _build_one(self, split, scenario, sample_index, speaker_pair):
+    target_speaker, non_target_speaker = speaker_pair
     target_path, target_vad = self._source(
         target_speaker, sample_index)
     non_target_path, non_target_vad = self._source(
@@ -578,9 +599,11 @@ class ReviewSetGenerator:
 
     for split, speakers in (
         ('train', self.train_speakers), ('dev', self.dev_speakers)):
-      for index, scenario in enumerate(plans[split]):
+      pair_seed = self.args.seed + (0 if split == 'train' else 1_000_000)
+      pairs = speaker_pair_plan(speakers, len(plans[split]), pair_seed)
+      for index, (scenario, pair) in enumerate(zip(plans[split], pairs)):
         recipe, manifest = self._build_one(
-            split, scenario, index, speakers)
+            split, scenario, index, pair)
         recipes.append(recipe)
         manifests[split].append(manifest)
         total_counts.update({
