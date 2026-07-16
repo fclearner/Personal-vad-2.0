@@ -8,6 +8,8 @@ from pathlib import Path
 
 import soundfile as sf
 
+from extract_aishell_webdataset import read_speaker_info
+
 
 def discover_speaker_wavs(wav_roots, min_utterances=6):
   """Return speaker -> sorted wav paths across non-overlapping roots."""
@@ -66,6 +68,54 @@ def partition_speakers(speakers, train_count, dev_count, test_count, seed):
   return partitions
 
 
+def partition_speakers_balanced(
+    speakers, speaker_groups, train_count, dev_count, test_count, seed):
+  """Partition equal-sized groups evenly across train/dev/test."""
+
+  names = sorted(speakers)
+  missing = sorted(set(names) - set(speaker_groups))
+  if missing:
+    raise ValueError(f'Missing speaker group metadata: {missing}')
+  grouped = defaultdict(list)
+  for name in names:
+    grouped[speaker_groups[name]].append(name)
+  if len(grouped) < 2:
+    raise ValueError('Balanced partitioning requires at least two groups.')
+  group_sizes = {group: len(members) for group, members in grouped.items()}
+  if len(set(group_sizes.values())) != 1:
+    raise ValueError(f'Speaker groups are not equal-sized: {group_sizes}')
+  counts = {'train': train_count, 'dev': dev_count, 'test': test_count}
+  if train_count <= 0 or dev_count <= 0 or test_count < 0:
+    raise ValueError(
+        'train/dev counts must be positive and test count non-negative.')
+  if sum(counts.values()) != len(names):
+    raise ValueError(
+        f'Speaker counts sum to {sum(counts.values())}, '
+        f'but {len(names)} speakers were discovered.')
+  for split, count in counts.items():
+    if count % len(grouped):
+      raise ValueError(
+          f'{split} count {count} is not divisible by {len(grouped)} groups.')
+
+  partitions = {split: [] for split in counts}
+  for group_index, group in enumerate(sorted(grouped)):
+    members = sorted(grouped[group])
+    random.Random(seed + group_index).shuffle(members)
+    offset = 0
+    for split, count in counts.items():
+      take = count // len(grouped)
+      partitions[split].extend(members[offset:offset + take])
+      offset += take
+    if offset != len(members):
+      raise AssertionError(f'Unassigned speakers in group {group}.')
+  for split in partitions:
+    partitions[split].sort()
+  flattened = [speaker for split in partitions.values() for speaker in split]
+  if len(flattened) != len(set(flattened)):
+    raise AssertionError('Speaker partition leakage detected.')
+  return partitions
+
+
 def build_utterance_records(speakers, partitions, enrollment_utterances=2,
                             sample_rate=16000):
   """Read audio headers and mark disjoint enrollment/current utterances."""
@@ -115,7 +165,7 @@ def _write_jsonl(path, rows):
 
 
 def write_manifests(output_dir, wav_roots, partitions, records, seed,
-                    enrollment_utterances):
+                    enrollment_utterances, speaker_groups=None):
   output_dir = Path(output_dir).resolve()
   output_dir.mkdir(parents=True, exist_ok=True)
   split_payload = {
@@ -158,6 +208,12 @@ def write_manifests(output_dir, wav_roots, partitions, records, seed,
       'eligible_mixing_utterances': sum(
           record['eligible_for_mixing'] for record in records),
   }
+  if speaker_groups is not None:
+    summary['speaker_groups'] = {
+        split: dict(sorted(Counter(
+            speaker_groups[speaker] for speaker in names).items()))
+        for split, names in partitions.items()
+    }
   (output_dir / 'summary.json').write_text(
       json.dumps(summary, ensure_ascii=False, indent=2),
       encoding='utf-8')
@@ -178,20 +234,33 @@ def parse_args():
   parser.add_argument('--min-utterances', type=int, default=6)
   parser.add_argument('--sample-rate', type=int, default=16000)
   parser.add_argument('--seed', type=int, default=20260716)
+  parser.add_argument(
+      '--speaker-info',
+      help='Official AISHELL speaker.info; balances discovered M/F groups.')
   return parser.parse_args()
 
 
 def main():
   args = parse_args()
   speakers = discover_speaker_wavs(args.wav_root, args.min_utterances)
-  partitions = partition_speakers(
-      speakers, args.train_speakers, args.dev_speakers,
-      args.test_speakers, args.seed)
+  speaker_groups = None
+  if args.speaker_info:
+    metadata = read_speaker_info(args.speaker_info)
+    speaker_groups = {
+        speaker: metadata[speaker]
+        for speaker in speakers if speaker in metadata}
+    partitions = partition_speakers_balanced(
+        speakers, speaker_groups, args.train_speakers, args.dev_speakers,
+        args.test_speakers, args.seed)
+  else:
+    partitions = partition_speakers(
+        speakers, args.train_speakers, args.dev_speakers,
+        args.test_speakers, args.seed)
   records = build_utterance_records(
       speakers, partitions, args.enrollment_utterances, args.sample_rate)
   summary = write_manifests(
       args.output_dir, args.wav_root, partitions, records, args.seed,
-      args.enrollment_utterances)
+      args.enrollment_utterances, speaker_groups)
   print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 

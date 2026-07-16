@@ -9,7 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from prepare_speaker_manifest import (
-    build_utterance_records, discover_speaker_wavs, partition_speakers)
+    build_utterance_records, discover_speaker_wavs, partition_speakers,
+    partition_speakers_balanced)
 
 
 def _speaker(root, name, utterances=6):
@@ -72,3 +73,21 @@ def test_duplicate_speaker_across_roots_is_rejected():
       assert 'Duplicate speaker' in str(error)
     else:
       raise AssertionError('Duplicate speaker was not rejected.')
+
+
+def test_balanced_partition_preserves_groups_in_every_split():
+  speakers = {f'S{index:04d}': () for index in range(2, 12)}
+  groups = {
+      speaker: 'M' if index < 7 else 'F'
+      for index, speaker in enumerate(sorted(speakers), 2)}
+  partitions = partition_speakers_balanced(
+      speakers, groups, 6, 2, 2, seed=17)
+  for split, expected_per_group in (
+      ('train', 3), ('dev', 1), ('test', 1)):
+    counts = {
+        group: sum(groups[speaker] == group for speaker in partitions[split])
+        for group in ('M', 'F')}
+    assert counts == {'M': expected_per_group, 'F': expected_per_group}
+  assert not set(partitions['train']) & set(partitions['dev'])
+  assert not set(partitions['train']) & set(partitions['test'])
+  assert not set(partitions['dev']) & set(partitions['test'])
