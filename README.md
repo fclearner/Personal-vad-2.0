@@ -52,6 +52,29 @@ those choices are explicit rather than presented as paper facts: no CMVN,
 Hann window, HTK Mel scale, and a 1024-point zero-padded FFT. The complete
 `PvadFeatureConfig` must match between data generation and inference.
 
+## Review Data Generation
+
+Install `requirements-data.txt`, then provide speaker-separated AISHELL wavs,
+WHAM `tr/cv` noise, persisted Qwen3-Omni TTS response wavs, and local FSMN
+VAD/CAM++ model directories:
+
+```bash
+python generate_review_set.py \
+  --aishell-wav-root /path/to/aishell_subset/wav/train \
+  --wham-root /path/to/wham_noise \
+  --tts-root /path/to/persisted/page_output \
+  --vad-model /path/to/fsmn_vad \
+  --campplus-model /path/to/campplus \
+  --output-dir /path/to/review100
+```
+
+The fixed review plan creates 80 train and 20 dev mixtures with disjoint
+speakers. Enrollment uses two utterances that never appear as current audio.
+Recipes cover target-only, near/far non-target, overlap, WHAM/high noise, and
+TTS playback. Labels encode identity activity only: target wins on overlap,
+non-target/TTS speech is class 1, and noise/silence is class 2. No ASR text,
+valid/invalid label, or semantic-end label enters this pipeline.
+
 ## Train
 
 ```bash

@@ -90,10 +90,12 @@ def _as_mono_float(waveform: torch.Tensor) -> torch.Tensor:
 
 
 def load_audio(path: str | Path, sample_rate: int = 16000) -> torch.Tensor:
+  import soundfile as sf
   import torchaudio
 
-  waveform, source_rate = torchaudio.load(str(path))
-  waveform = _as_mono_float(waveform)
+  array, source_rate = sf.read(
+      str(path), dtype='float32', always_2d=True)
+  waveform = _as_mono_float(torch.from_numpy(array).transpose(0, 1))
   if source_rate != sample_rate:
     waveform = torchaudio.functional.resample(
         waveform, source_rate, sample_rate)
