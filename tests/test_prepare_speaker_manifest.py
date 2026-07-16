@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT))
 
 from prepare_speaker_manifest import (
     build_utterance_records, discover_speaker_wavs, partition_speakers,
-    partition_speakers_balanced)
+    partition_speakers_balanced, select_speakers)
 
 
 def _speaker(root, name, utterances=6):
@@ -91,3 +91,15 @@ def test_balanced_partition_preserves_groups_in_every_split():
   assert not set(partitions['train']) & set(partitions['dev'])
   assert not set(partitions['train']) & set(partitions['test'])
   assert not set(partitions['dev']) & set(partitions['test'])
+
+
+def test_explicit_speaker_selection_is_exact():
+  speakers = {'S0002': ('a.wav',), 'S0003': ('b.wav',)}
+  assert select_speakers(speakers, ['S0003']) == {
+      'S0003': ('b.wav',)}
+  try:
+    select_speakers(speakers, ['S9999'])
+  except ValueError as error:
+    assert 'not discovered' in str(error)
+  else:
+    raise AssertionError('Missing selected speaker was not rejected.')

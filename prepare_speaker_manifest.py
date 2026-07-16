@@ -38,6 +38,20 @@ def discover_speaker_wavs(wav_roots, min_utterances=6):
   return speakers
 
 
+def select_speakers(speakers, selected_names):
+  """Select an explicit speaker subset without copying source audio."""
+
+  selected_names = list(selected_names)
+  if len(selected_names) != len(set(selected_names)):
+    raise ValueError('Speaker selection contains duplicates.')
+  missing = sorted(set(selected_names) - set(speakers))
+  if missing:
+    raise ValueError(f'Selected speakers were not discovered: {missing}')
+  if not selected_names:
+    raise ValueError('Speaker selection is empty.')
+  return {name: speakers[name] for name in sorted(selected_names)}
+
+
 def partition_speakers(speakers, train_count, dev_count, test_count, seed):
   """Deterministically partition every speaker exactly once."""
 
@@ -237,12 +251,20 @@ def parse_args():
   parser.add_argument(
       '--speaker-info',
       help='Official AISHELL speaker.info; balances discovered M/F groups.')
+  parser.add_argument(
+      '--speaker-list',
+      help='Optional text file with one selected speaker ID per line.')
   return parser.parse_args()
 
 
 def main():
   args = parse_args()
   speakers = discover_speaker_wavs(args.wav_root, args.min_utterances)
+  if args.speaker_list:
+    selected_names = [
+        line.strip() for line in Path(args.speaker_list).read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith('#')]
+    speakers = select_speakers(speakers, selected_names)
   speaker_groups = None
   if args.speaker_info:
     metadata = read_speaker_info(args.speaker_info)
