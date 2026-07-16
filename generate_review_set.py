@@ -118,10 +118,11 @@ def _active_rms(waveform, intervals):
   return values.square().mean().clamp_min(1e-12).sqrt()
 
 
-def _load_vad_pipeline(model):
+def _load_vad_pipeline(model, device='cpu'):
   from modelscope.pipelines import pipeline
   from modelscope.utils.constant import Tasks
-  return pipeline(task=Tasks.voice_activity_detection, model=str(model))
+  return pipeline(
+      task=Tasks.voice_activity_detection, model=str(model), device=device)
 
 
 def _vad_intervals(vad_pipeline, audio_path, cache):
@@ -341,8 +342,10 @@ class ReviewSetGenerator:
     if self.vad_cache_path.exists():
       self.vad_cache = json.loads(
           self.vad_cache_path.read_text(encoding='utf-8'))
-    self.vad_pipeline = _load_vad_pipeline(args.vad_model)
-    self.sv_pipeline = load_speaker_pipeline(args.campplus_model)
+    self.vad_pipeline = _load_vad_pipeline(
+        args.vad_model, args.preprocess_device)
+    self.sv_pipeline = load_speaker_pipeline(
+        args.campplus_model, args.preprocess_device)
     self.feature_extractor = PvadFeatureExtractor(PvadFeatureConfig())
     self.embedding_paths = self._export_embeddings()
 
@@ -624,6 +627,8 @@ def parse_args():
   parser.add_argument('--train-samples', type=int, default=80)
   parser.add_argument('--dev-samples', type=int, default=20)
   parser.add_argument('--min-utterances', type=int, default=6)
+  parser.add_argument(
+      '--preprocess-device', choices=('cpu', 'cuda'), default='cpu')
   return parser.parse_args()
 
 

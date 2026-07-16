@@ -44,10 +44,11 @@ def parse_args():
                       default=True, help='L2-normalize exported embeddings.')
   parser.add_argument('--aggregate-output', default='',
                       help='Optional filename for the normalized group mean.')
+  parser.add_argument('--device', choices=('cpu', 'cuda'), default='cpu')
   return parser.parse_args()
 
 
-def load_pipeline(model):
+def load_pipeline(model, device='cpu'):
   try:
     from modelscope.pipelines import pipeline
     from modelscope.utils.constant import Tasks
@@ -56,13 +57,15 @@ def load_pipeline(model):
         'ModelScope speaker export requires modelscope and soundfile. '
         'Install them with: pip install -r requirements-speaker.txt') from exc
 
-  return pipeline(task=Tasks.speaker_verification, model=model)
+  return pipeline(
+      task=Tasks.speaker_verification, model=model, device=device)
 
 
-def export_embeddings(model, audio_paths, output_dir, suffix, normalize=True):
+def export_embeddings(model, audio_paths, output_dir, suffix, normalize=True,
+                      device='cpu'):
   output_dir = Path(output_dir)
   output_dir.mkdir(parents=True, exist_ok=True)
-  sv_pipeline = load_pipeline(model)
+  sv_pipeline = load_pipeline(model, device=device)
   written = []
 
   for audio_path in audio_paths:
@@ -85,7 +88,7 @@ def main():
   args = parse_args()
   written = export_embeddings(
       args.model, args.audio, args.output_dir, args.suffix,
-      normalize=args.normalize)
+      normalize=args.normalize, device=args.device)
   for audio_path, output_path, dim in written:
     vector = np.load(output_path)
     print(f'{audio_path} -> {output_path} ({dim} dims, '
