@@ -43,6 +43,15 @@ shape `(frames,)`, and each speaker embedding must have shape `(64,)` by
 default. If `embedding` is omitted, the sample is treated as enrollment-less and
 uses a zero speaker embedding.
 
+The in-repo `PvadFeatureExtractor` implements the paper-published dimensions:
+128 log-Mel energies from a 32 ms window at a 10 ms shift, four contiguous
+frames stacked to 512 dimensions, followed by factor-three time subsampling.
+The product frontend makes that stack causal (current plus three past frames).
+The paper does not publish a CMVN, window, Mel scale, or FFT-size recipe, so
+those choices are explicit rather than presented as paper facts: no CMVN,
+Hann window, HTK Mel scale, and a 1024-point zero-padded FFT. The complete
+`PvadFeatureConfig` must match between data generation and inference.
+
 ## Train
 
 ```bash
