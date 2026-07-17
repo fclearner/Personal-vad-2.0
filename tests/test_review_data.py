@@ -12,11 +12,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from generate_review_set import (
-    DEV_SCENARIOS, SAMPLE_RATE, TRAIN_SCENARIOS, _active_rms,
+    DEV_SCENARIOS, SAMPLE_RATE, TARGET_POSITIVE_SCENARIOS, TRAIN_SCENARIOS,
+    _active_rms,
     _add_noise, _write_pcm16_and_reload, discover_tts_wavs,
     load_source_partitions,
     scaled_scenario_counts, scenario_plan, simulated_farfield_rir,
-    speaker_pair_plan, split_speakers, transform_intervals)
+    speaker_pair_plan, split_speakers, stratified_scenario_assignment,
+    transform_intervals)
 
 
 def test_scenario_plan_is_exact_and_deterministic():
@@ -61,6 +63,23 @@ def test_speaker_pair_plan_is_deterministic_and_diverse():
   target_counts = Counter(target for target, _ in first)
   assert set(target_counts.values()) == {2, 3}
   assert len(set(first)) >= 20
+
+
+def test_stratified_scenarios_cover_each_target_identity_decision():
+  speakers = [f'S{index:04d}' for index in range(160)]
+  pairs = speaker_pair_plan(speakers, 800, seed=17)
+  counts = scaled_scenario_counts(TRAIN_SCENARIOS, 800)
+  first = stratified_scenario_assignment(pairs, counts, seed=18)
+  second = stratified_scenario_assignment(pairs, counts, seed=18)
+  assert first == second
+  assert Counter(first) == Counter(counts)
+  by_speaker = {speaker: [] for speaker in speakers}
+  for scenario, (target, _) in zip(first, pairs):
+    by_speaker[target].append(scenario)
+  assert all('non_target_near' in scenarios
+             for scenarios in by_speaker.values())
+  assert all(TARGET_POSITIVE_SCENARIOS.intersection(scenarios)
+             for scenarios in by_speaker.values())
 
 
 def test_farfield_rir_and_active_snr():

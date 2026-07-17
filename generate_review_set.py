@@ -24,8 +24,8 @@ SAMPLE_RATE = 16000
 MIX_SECONDS = 10.0
 MAX_SOURCE_SECONDS = 7.0
 TRAIN_SCENARIOS = {
-    'target_only': 15,
-    'non_target_near': 15,
+    'target_only': 14,
+    'non_target_near': 16,
     'non_target_far': 10,
     'overlap': 15,
     'wham_noise': 10,
@@ -33,6 +33,9 @@ TRAIN_SCENARIOS = {
     'tts_echo': 5,
     'target_tts_overlap': 5,
 }
+TARGET_POSITIVE_SCENARIOS = frozenset({
+    'target_only', 'overlap', 'high_noise_target', 'target_tts_overlap',
+})
 DEV_SCENARIOS = {
     'target_only': 4,
     'non_target_near': 4,
@@ -96,6 +99,69 @@ def speaker_pair_plan(speakers, sample_count, seed):
         for index, target in enumerate(order))
     cycle += 1
   return pairs[:sample_count]
+
+
+def stratified_scenario_assignment(pairs, scenario_counts, seed):
+  """Assign exact scenarios while covering identity contrast per target.
+
+  Every target speaker receives at least one nearfield non-target example and
+  one target-positive example. This prevents the global scenario shuffle from
+  leaving enrollment speakers with only one side of the identity decision.
+  """
+  if not pairs:
+    raise ValueError('pairs must not be empty.')
+  if sum(scenario_counts.values()) != len(pairs):
+    raise ValueError('scenario_counts must sum to the number of pairs.')
+  if any(count < 0 for count in scenario_counts.values()):
+    raise ValueError('scenario_counts must be non-negative.')
+
+  speaker_slots = {}
+  for index, (target, _) in enumerate(pairs):
+    speaker_slots.setdefault(target, []).append(index)
+  speakers = sorted(speaker_slots)
+  assigned = [None] * len(pairs)
+  remaining = Counter(scenario_counts)
+  rng = random.Random(seed)
+
+  requirements = (
+      ('nearfield identity negative', frozenset({'non_target_near'})),
+      ('target positive', TARGET_POSITIVE_SCENARIOS),
+  )
+  for requirement_name, eligible in requirements:
+    pool = [
+        scenario for scenario in sorted(eligible)
+        for _ in range(remaining.get(scenario, 0))]
+    if len(pool) < len(speakers):
+      raise ValueError(
+          f'Not enough {requirement_name} scenarios for all target speakers.')
+    rng.shuffle(pool)
+    speaker_order = list(speakers)
+    rng.shuffle(speaker_order)
+    for speaker, scenario in zip(speaker_order, pool[:len(speakers)]):
+      open_slots = [
+          index for index in speaker_slots[speaker]
+          if assigned[index] is None]
+      if not open_slots:
+        raise ValueError(
+            f'Not enough samples to cover requirements for {speaker}.')
+      slot = rng.choice(open_slots)
+      assigned[slot] = scenario
+      remaining[scenario] -= 1
+
+  remaining_scenarios = [
+      scenario for scenario in sorted(remaining)
+      for _ in range(remaining[scenario])]
+  open_slots = [index for index, scenario in enumerate(assigned)
+                if scenario is None]
+  if len(remaining_scenarios) != len(open_slots):
+    raise AssertionError('Scenario assignment did not preserve exact counts.')
+  rng.shuffle(remaining_scenarios)
+  rng.shuffle(open_slots)
+  for slot, scenario in zip(open_slots, remaining_scenarios):
+    assigned[slot] = scenario
+  if Counter(assigned) != Counter(scenario_counts):
+    raise AssertionError('Scenario assignment changed requested counts.')
+  return assigned
 
 
 def split_speakers(speakers, train_count=8):
@@ -644,7 +710,9 @@ class ReviewSetGenerator:
         ('train', self.train_speakers), ('dev', self.dev_speakers)):
       pair_seed = self.args.seed + (0 if split == 'train' else 1_000_000)
       pairs = speaker_pair_plan(speakers, len(plans[split]), pair_seed)
-      for index, (scenario, pair) in enumerate(zip(plans[split], pairs)):
+      scenarios = stratified_scenario_assignment(
+          pairs, Counter(plans[split]), pair_seed + 2_000_000)
+      for index, (scenario, pair) in enumerate(zip(scenarios, pairs)):
         recipe, manifest = self._build_one(
             split, scenario, index, pair)
         recipes.append(recipe)
