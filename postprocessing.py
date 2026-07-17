@@ -109,6 +109,18 @@ class PvadStateTransition:
     return (self.previous_class == TARGET_CLASS
             and self.current_class != TARGET_CLASS)
 
+  def to_dict(self):
+    return {
+        'frame_index': self.frame_index,
+        'decision_time_ms': self.decision_time_ms,
+        'previous_class': self.previous_class,
+        'previous_label': CLASS_NAMES[self.previous_class],
+        'current_class': self.current_class,
+        'current_label': CLASS_NAMES[self.current_class],
+        'target_activated': self.target_activated,
+        'target_released': self.target_released,
+    }
+
 
 @dataclass(frozen=True)
 class PvadFrameDecision:
@@ -120,6 +132,33 @@ class PvadFrameDecision:
   pending_class: int | None
   pending_frames: int
   transition: PvadStateTransition | None
+
+  def to_dict(self):
+    return {
+        'frame_index': self.frame.index,
+        'stack_start_sample': self.frame.stack_start_sample,
+        'decision_start_sample': self.frame.decision_start_sample,
+        'decision_end_sample': self.frame.decision_end_sample,
+        'p_target': self.probabilities[TARGET_CLASS],
+        'p_non_target': self.probabilities[NON_TARGET_CLASS],
+        'p_non_speech': self.probabilities[NON_SPEECH_CLASS],
+        'smoothed_p_target': self.smoothed_probabilities[TARGET_CLASS],
+        'smoothed_p_non_target': (
+            self.smoothed_probabilities[NON_TARGET_CLASS]),
+        'smoothed_p_non_speech': (
+            self.smoothed_probabilities[NON_SPEECH_CLASS]),
+        'raw_class': self.raw_class,
+        'raw_label': CLASS_NAMES[self.raw_class],
+        'state_class': self.state_class,
+        'state_label': CLASS_NAMES[self.state_class],
+        'pending_class': self.pending_class,
+        'pending_label': (
+            None if self.pending_class is None
+            else CLASS_NAMES[self.pending_class]),
+        'pending_frames': self.pending_frames,
+        'transition': (
+            None if self.transition is None else self.transition.to_dict()),
+    }
 
 
 @dataclass(frozen=True)

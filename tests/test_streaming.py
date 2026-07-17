@@ -8,7 +8,9 @@ sys.path.insert(0, str(ROOT))
 
 from features import PvadFeatureExtractor
 from model.pvad2 import Pvad2
-from streaming import PvadStreamingAdapter, forward_feature_chunk
+from postprocessing import PvadPostprocessor, PvadPostprocessorConfig
+from streaming import (PvadStreamingAdapter, PvadStreamingPipeline,
+                       forward_feature_chunk)
 
 
 def _small_model():
@@ -91,8 +93,52 @@ def test_streaming_requires_eval_mode():
     raise AssertionError('training-mode streaming must be rejected')
 
 
+def test_postprocessed_pipeline_keeps_alignment_and_resets_both_states():
+  torch.manual_seed(29)
+  model = _small_model()
+  adapter = PvadStreamingAdapter(model, torch.randn(64), device='cpu')
+  postprocessor = PvadPostprocessor(PvadPostprocessorConfig(
+      enter_thresholds=(1.0, 1.0, 1.0),
+      exit_thresholds=(0.0, 0.0, 0.0),
+      min_enter_frames=(1, 1, 1), ema_alpha=1.0))
+  pipeline = PvadStreamingPipeline(adapter, postprocessor)
+  waveform = torch.randn(7319) * 0.05
+  first = pipeline.feed_audio(waveform[:437])
+  second = pipeline.feed_audio(waveform[437:])
+  decisions = first.postprocessed.decisions + second.postprocessed.decisions
+  assert len(decisions) == adapter.feature_frames
+  assert [decision.frame.index for decision in decisions] == list(
+      range(adapter.feature_frames))
+  assert len(second.shadow_records) == len(second.inference.frames)
+  if second.shadow_records:
+    assert {'p_target', 'p_non_target', 'p_non_speech', 'state_label'} <= set(
+        second.shadow_records[0])
+
+  pipeline.reset()
+  replay = pipeline.feed_audio(waveform)
+  assert replay.postprocessed.decisions[0].frame.index == 0
+  assert postprocessor.next_frame_index == adapter.feature_frames
+
+
+def test_postprocessed_pipeline_rejects_sample_rate_mismatch():
+  adapter = PvadStreamingAdapter(_small_model(), torch.randn(64))
+  postprocessor = PvadPostprocessor(PvadPostprocessorConfig(
+      enter_thresholds=(0.6, 0.6, 0.6),
+      exit_thresholds=(0.4, 0.4, 0.4),
+      min_enter_frames=(1, 1, 1), ema_alpha=1.0,
+      sample_rate=8000))
+  try:
+    PvadStreamingPipeline(adapter, postprocessor)
+  except ValueError as error:
+    assert 'sample rates' in str(error)
+  else:
+    raise AssertionError('Mismatched sample rates must be rejected.')
+
+
 if __name__ == '__main__':
   test_cached_feature_chunks_match_offline()
   test_audio_adapter_matches_offline_and_reports_rtf()
   test_streaming_requires_eval_mode()
+  test_postprocessed_pipeline_keeps_alignment_and_resets_both_states()
+  test_postprocessed_pipeline_rejects_sample_rate_mismatch()
   print('streaming tests ok')

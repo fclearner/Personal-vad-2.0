@@ -9,6 +9,7 @@ from torch.nn import functional as F
 
 from features import FeatureFrame, PvadFeatureConfig, PvadFeatureExtractor
 from model.pvad2 import Pvad2, PvadStreamingState
+from postprocessing import PvadPostprocessOutput, PvadPostprocessor
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,17 @@ class StreamingPvadOutput:
   probabilities: Tensor
   frames: tuple[FeatureFrame, ...]
   cumulative_rtf: float | None
+
+
+@dataclass(frozen=True)
+class PostprocessedStreamingPvadOutput:
+  inference: StreamingPvadOutput
+  postprocessed: PvadPostprocessOutput
+
+  @property
+  def shadow_records(self):
+    return tuple(
+        decision.to_dict() for decision in self.postprocessed.decisions)
 
 
 def _empty_stack_caches(x, layers):
@@ -233,3 +245,29 @@ class PvadStreamingAdapter:
     return StreamingPvadOutput(
         logits=logits, probabilities=probabilities,
         frames=frames, cumulative_rtf=rtf)
+
+
+class PvadStreamingPipeline:
+  """Own a streaming adapter and postprocessor without taking control action."""
+
+  def __init__(self, adapter: PvadStreamingAdapter,
+               postprocessor: PvadPostprocessor):
+    sample_rate = adapter.feature_extractor.config.sample_rate
+    if postprocessor.config.sample_rate != sample_rate:
+      raise ValueError(
+          'Postprocessor and feature extractor sample rates must match.')
+    if adapter.feature_frames or postprocessor.next_frame_index is not None:
+      raise ValueError('Adapter and postprocessor must be reset before use.')
+    self.adapter = adapter
+    self.postprocessor = postprocessor
+
+  def reset(self):
+    self.adapter.reset()
+    self.postprocessor.reset()
+
+  def feed_audio(self, waveform_chunk: Tensor):
+    inference = self.adapter.feed_audio(waveform_chunk)
+    postprocessed = self.postprocessor.process(
+        inference.probabilities, inference.frames)
+    return PostprocessedStreamingPvadOutput(
+        inference=inference, postprocessed=postprocessed)

@@ -43,6 +43,11 @@ def test_target_confirmation_hysteresis_and_release():
   assert not output.transitions[0].target_released
   assert output.transitions[1].target_released
   assert output.transitions[0].decision_time_ms == 122.0
+  record = output.decisions[2].to_dict()
+  assert record['p_target'] == 0.75
+  assert record['state_label'] == 'target'
+  assert record['transition']['target_activated']
+  assert record['decision_end_sample'] == 1952
 
 
 def test_confirmation_state_survives_chunks_and_reset_is_explicit():
