@@ -5,7 +5,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from train import format_metric, selection_score, summarize_runtime
+from train import (epoch_checkpoint_name, format_metric, selection_score,
+                   summarize_runtime)
 
 
 def test_selection_score_directions_and_missing_target():
@@ -38,6 +39,16 @@ def test_runtime_summary_reports_throughput_and_memory():
   assert result['frames_per_second'] == 800.0
   assert result['peak_memory_allocated_mb'] == 128.0
   assert result['peak_memory_reserved_mb'] == 256.0
+
+
+def test_epoch_checkpoint_name_is_stable_and_rejects_invalid_epochs():
+  assert epoch_checkpoint_name(3) == 'epoch-0003.pt'
+  try:
+    epoch_checkpoint_name(0)
+  except ValueError:
+    pass
+  else:
+    raise AssertionError('Non-positive epochs must be rejected.')
 
 
 if __name__ == '__main__':

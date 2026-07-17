@@ -37,6 +37,8 @@ def parse_args():
                       help='Use CUDA automatic mixed precision.')
   parser.add_argument('--max-steps-per-epoch', type=int, default=None,
                       help='Optional bounded debug step count per epoch.')
+  parser.add_argument('--save-every-epoch', action='store_true',
+                      help='Keep epoch-NNNN.pt checkpoints for pilot review.')
   parser.add_argument('--selection-metric',
                       choices=('loss', 'macro_f1', 'target_f1'),
                       default='target_f1',
@@ -284,6 +286,12 @@ def append_metrics(path, row):
     handle.write(json.dumps(row, sort_keys=True) + '\n')
 
 
+def epoch_checkpoint_name(epoch):
+  if epoch <= 0:
+    raise ValueError('epoch must be positive.')
+  return f'epoch-{epoch:04d}.pt'
+
+
 def main():
   args = parse_args()
   if args.max_steps_per_epoch is not None and args.max_steps_per_epoch <= 0:
@@ -333,6 +341,11 @@ def main():
       best_selection_score = score
     save_checkpoint(output_dir / 'last.pt', model, optimizer, epoch,
                     train_metrics, valid_metrics, best_selection_score, args)
+
+    if args.save_every_epoch:
+      save_checkpoint(
+          output_dir / epoch_checkpoint_name(epoch), model, optimizer, epoch,
+          train_metrics, valid_metrics, best_selection_score, args)
 
     if is_best:
       save_checkpoint(output_dir / 'best.pt', model, optimizer, epoch,
