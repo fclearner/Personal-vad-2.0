@@ -167,6 +167,258 @@ class PvadPostprocessOutput:
   transitions: tuple[PvadStateTransition, ...]
 
 
+TARGET_SPEECH_IDLE = 'idle'
+TARGET_SPEECH_STARTING = 'starting'
+TARGET_SPEECH_ACTIVE = 'active'
+TARGET_SPEECH_HANGOVER = 'hangover'
+
+
+@dataclass(frozen=True)
+class TargetSpeechStateMachineConfig:
+  """Calibrated target-speaker speech onset and release policy."""
+
+  activation_threshold: float
+  release_threshold: float
+  min_activation_frames: int
+  min_release_frames: int
+  sample_rate: int = 16000
+
+  def __post_init__(self):
+    if not 0.0 <= self.activation_threshold <= 1.0:
+      raise ValueError('activation_threshold must be within [0, 1].')
+    if not 0.0 <= self.release_threshold <= self.activation_threshold:
+      raise ValueError(
+          'release_threshold must be within [0, activation_threshold].')
+    if self.min_activation_frames <= 0:
+      raise ValueError('min_activation_frames must be positive.')
+    if self.min_release_frames <= 0:
+      raise ValueError('min_release_frames must be positive.')
+    if self.sample_rate <= 0:
+      raise ValueError('sample_rate must be positive.')
+
+  def to_dict(self):
+    return {
+        'activation_threshold': self.activation_threshold,
+        'release_threshold': self.release_threshold,
+        'min_activation_frames': self.min_activation_frames,
+        'min_release_frames': self.min_release_frames,
+        'sample_rate': self.sample_rate,
+    }
+
+  @classmethod
+  def from_dict(cls, payload):
+    return cls(
+        activation_threshold=payload['activation_threshold'],
+        release_threshold=payload['release_threshold'],
+        min_activation_frames=payload['min_activation_frames'],
+        min_release_frames=payload['min_release_frames'],
+        sample_rate=payload.get('sample_rate', 16000))
+
+
+@dataclass(frozen=True)
+class TargetSpeechTransition:
+  frame_index: int
+  decision_time_ms: float
+  event: str
+  segment_start_sample: int
+  segment_end_sample: int | None
+
+  @property
+  def target_activated(self):
+    return self.event == 'target_speech_start'
+
+  @property
+  def target_released(self):
+    return self.event == 'target_speech_end'
+
+  def to_dict(self):
+    return {
+        'frame_index': self.frame_index,
+        'decision_time_ms': self.decision_time_ms,
+        'event': self.event,
+        'segment_start_sample': self.segment_start_sample,
+        'segment_end_sample': self.segment_end_sample,
+        'target_activated': self.target_activated,
+        'target_released': self.target_released,
+    }
+
+
+@dataclass(frozen=True)
+class TargetSpeechFrameDecision:
+  frame: FeatureFrame
+  p_target: float
+  state: str
+  target_active: bool
+  identity_latched: bool
+  activation_run_frames: int
+  release_run_frames: int
+  transition: TargetSpeechTransition | None
+
+  def to_dict(self):
+    return {
+        'frame_index': self.frame.index,
+        'decision_start_sample': self.frame.decision_start_sample,
+        'decision_end_sample': self.frame.decision_end_sample,
+        'p_target': self.p_target,
+        'state': self.state,
+        'target_active': self.target_active,
+        'identity_latched': self.identity_latched,
+        'activation_run_frames': self.activation_run_frames,
+        'release_run_frames': self.release_run_frames,
+        'transition': (
+            None if self.transition is None else self.transition.to_dict()),
+    }
+
+
+@dataclass(frozen=True)
+class TargetSpeechStateMachineOutput:
+  decisions: tuple[TargetSpeechFrameDecision, ...]
+  transitions: tuple[TargetSpeechTransition, ...]
+  completed_segments: tuple[tuple[int, int], ...]
+
+
+class TargetSpeechStateMachine:
+  """FSMN-style causal onset, hangover and release for target speech.
+
+  Identity remains latched for the whole stream epoch after a confirmed target
+  onset.  Callers must explicitly reset at an independent buffer boundary.
+  """
+
+  def __init__(self, config: TargetSpeechStateMachineConfig):
+    self.config = config
+    self.reset()
+
+  def reset(self):
+    self.target_active = False
+    self.identity_latched = False
+    self.activation_run_frames = 0
+    self.release_run_frames = 0
+    self.candidate_start_sample = None
+    self.segment_start_sample = None
+    self.last_target_end_sample = None
+    self.completed_segments = []
+    self.next_frame_index = None
+
+  @property
+  def state(self):
+    if self.target_active:
+      return (
+          TARGET_SPEECH_HANGOVER
+          if self.release_run_frames else TARGET_SPEECH_ACTIVE)
+    if self.activation_run_frames:
+      return TARGET_SPEECH_STARTING
+    return TARGET_SPEECH_IDLE
+
+  def snapshot_segments(self, end_sample=None):
+    segments = list(self.completed_segments)
+    if self.target_active and self.segment_start_sample is not None:
+      segment_end = (
+          self.last_target_end_sample if end_sample is None else end_sample)
+      if segment_end is not None:
+        segment_end = max(self.segment_start_sample, int(segment_end))
+        segments.append((self.segment_start_sample, segment_end))
+    return tuple(segments)
+
+  def _start_transition(self, frame):
+    self.target_active = True
+    self.identity_latched = True
+    self.segment_start_sample = int(self.candidate_start_sample)
+    self.last_target_end_sample = int(frame.decision_end_sample)
+    self.activation_run_frames = 0
+    self.candidate_start_sample = None
+    return TargetSpeechTransition(
+        frame_index=frame.index,
+        decision_time_ms=(
+            frame.decision_end_sample * 1000.0 / self.config.sample_rate),
+        event='target_speech_start',
+        segment_start_sample=self.segment_start_sample,
+        segment_end_sample=None)
+
+  def _end_transition(self, frame):
+    segment_start = int(self.segment_start_sample)
+    segment_end_sample = (
+        self.last_target_end_sample
+        if self.last_target_end_sample is not None
+        else frame.decision_start_sample)
+    segment_end = max(
+        segment_start, int(segment_end_sample))
+    self.completed_segments.append((segment_start, segment_end))
+    self.target_active = False
+    self.release_run_frames = 0
+    self.segment_start_sample = None
+    self.last_target_end_sample = None
+    return TargetSpeechTransition(
+        frame_index=frame.index,
+        decision_time_ms=(
+            frame.decision_end_sample * 1000.0 / self.config.sample_rate),
+        event='target_speech_end',
+        segment_start_sample=segment_start,
+        segment_end_sample=segment_end)
+
+  def process(self, probabilities, frames: Sequence[FeatureFrame]):
+    if hasattr(probabilities, 'detach'):
+      probabilities = probabilities.detach().cpu().numpy()
+    probabilities = np.asarray(probabilities, dtype=np.float64)
+    frames = tuple(frames)
+    if probabilities.ndim != 2 or probabilities.shape[1] != len(CLASS_NAMES):
+      raise ValueError('probabilities must have shape (frames, 3).')
+    if probabilities.shape[0] != len(frames):
+      raise ValueError('probabilities and frames must have equal lengths.')
+    if (not np.isfinite(probabilities).all()
+        or np.any(probabilities < 0.0) or np.any(probabilities > 1.0)):
+      raise ValueError('probabilities must be finite and within [0, 1].')
+    if not np.allclose(probabilities.sum(axis=1), 1.0, atol=1e-5):
+      raise ValueError(
+          'Each probability row must sum to 1 within tolerance.')
+
+    decisions = []
+    transitions = []
+    completed_before = len(self.completed_segments)
+    for row, frame in zip(probabilities, frames):
+      if (self.next_frame_index is not None
+          and frame.index != self.next_frame_index):
+        raise ValueError(
+            'Feature frame indices must be contiguous; call reset() for a '
+            'new stream.')
+      self.next_frame_index = frame.index + 1
+      p_target = float(row[TARGET_CLASS])
+      transition = None
+      if not self.target_active:
+        if p_target >= self.config.activation_threshold:
+          if not self.activation_run_frames:
+            self.candidate_start_sample = int(frame.decision_start_sample)
+          self.activation_run_frames += 1
+          if self.activation_run_frames >= self.config.min_activation_frames:
+            transition = self._start_transition(frame)
+        else:
+          self.activation_run_frames = 0
+          self.candidate_start_sample = None
+      elif p_target >= self.config.release_threshold:
+        self.release_run_frames = 0
+        self.last_target_end_sample = int(frame.decision_end_sample)
+      else:
+        self.release_run_frames += 1
+        if self.release_run_frames >= self.config.min_release_frames:
+          transition = self._end_transition(frame)
+
+      if transition is not None:
+        transitions.append(transition)
+      decisions.append(TargetSpeechFrameDecision(
+          frame=frame,
+          p_target=p_target,
+          state=self.state,
+          target_active=self.target_active,
+          identity_latched=self.identity_latched,
+          activation_run_frames=self.activation_run_frames,
+          release_run_frames=self.release_run_frames,
+          transition=transition))
+    return TargetSpeechStateMachineOutput(
+        decisions=tuple(decisions),
+        transitions=tuple(transitions),
+        completed_segments=tuple(
+            self.completed_segments[completed_before:]))
+
+
 class PvadPostprocessor:
   """Causal hysteresis/confirmation state machine over three-class posteriors."""
 

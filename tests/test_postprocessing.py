@@ -7,8 +7,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from features import PvadFeatureExtractor
-from postprocessing import (NON_SPEECH_CLASS, NON_TARGET_CLASS, TARGET_CLASS,
-                            PvadPostprocessor, PvadPostprocessorConfig)
+from postprocessing import (
+    NON_SPEECH_CLASS, NON_TARGET_CLASS, TARGET_CLASS, PvadPostprocessor,
+    PvadPostprocessorConfig, TargetSpeechStateMachine,
+    TargetSpeechStateMachineConfig)
 
 
 def _config(**overrides):
@@ -137,3 +139,111 @@ def test_config_round_trip_and_input_validation():
       pass
     else:
       raise AssertionError('Invalid postprocessor input must be rejected.')
+
+
+def _target_speech_config(**overrides):
+  values = {
+      'activation_threshold': 0.55,
+      'release_threshold': 0.25,
+      'min_activation_frames': 2,
+      'min_release_frames': 2,
+  }
+  values.update(overrides)
+  return TargetSpeechStateMachineConfig(**values)
+
+
+def test_target_speech_fsm_confirms_hangs_over_recovers_and_releases():
+  processor = TargetSpeechStateMachine(_target_speech_config())
+  frames = _frames(6)
+  output = processor.process([
+      [0.60, 0.20, 0.20],
+      [0.70, 0.20, 0.10],
+      [0.10, 0.80, 0.10],
+      [0.30, 0.60, 0.10],
+      [0.10, 0.20, 0.70],
+      [0.05, 0.15, 0.80],
+  ], frames)
+  assert [item.state for item in output.decisions] == [
+      'starting', 'active', 'hangover', 'active', 'hangover', 'idle']
+  assert [item.transition.event for item in output.decisions
+          if item.transition is not None] == [
+              'target_speech_start', 'target_speech_end']
+  assert output.decisions[1].identity_latched
+  assert output.decisions[-1].identity_latched
+  expected_segment = (
+      frames[0].decision_start_sample,
+      frames[3].decision_end_sample)
+  assert output.completed_segments == (expected_segment,)
+  assert processor.snapshot_segments() == (expected_segment,)
+
+
+def test_target_speech_fsm_rejects_short_target_spike():
+  processor = TargetSpeechStateMachine(_target_speech_config(
+      min_activation_frames=3))
+  output = processor.process([
+      [0.90, 0.05, 0.05],
+      [0.80, 0.10, 0.10],
+      [0.10, 0.10, 0.80],
+  ], _frames(3))
+  assert not output.transitions
+  assert not processor.target_active
+  assert not processor.identity_latched
+  assert processor.snapshot_segments() == ()
+
+
+def test_target_speech_fsm_state_survives_chunks_and_reset_is_explicit():
+  processor = TargetSpeechStateMachine(_target_speech_config())
+  first = processor.process([[0.70, 0.20, 0.10]], _frames(1))
+  second = processor.process(
+      [[0.80, 0.10, 0.10]], _frames(1, start=1))
+  assert first.decisions[-1].state == 'starting'
+  assert second.transitions[0].target_activated
+  assert processor.snapshot_segments(
+      end_sample=_frames(1, start=2)[0].decision_end_sample)
+  try:
+    processor.process([[0.10, 0.10, 0.80]], _frames(1, start=8))
+  except ValueError as error:
+    assert 'contiguous' in str(error)
+  else:
+    raise AssertionError('A discontinuous stream must be rejected.')
+  processor.reset()
+  output = processor.process(
+      [[0.10, 0.10, 0.80]], _frames(1, start=8))
+  assert output.decisions[0].state == 'idle'
+  assert not output.decisions[0].identity_latched
+
+
+def test_target_speech_fsm_config_round_trip_and_input_validation():
+  config = _target_speech_config()
+  assert TargetSpeechStateMachineConfig.from_dict(
+      config.to_dict()) == config
+  invalid_configs = [
+      {'activation_threshold': 1.1, 'release_threshold': 0.2,
+       'min_activation_frames': 1, 'min_release_frames': 1},
+      {'activation_threshold': 0.5, 'release_threshold': 0.6,
+       'min_activation_frames': 1, 'min_release_frames': 1},
+      {'activation_threshold': 0.5, 'release_threshold': 0.2,
+       'min_activation_frames': 0, 'min_release_frames': 1},
+  ]
+  for values in invalid_configs:
+    try:
+      TargetSpeechStateMachineConfig(**values)
+    except ValueError:
+      pass
+    else:
+      raise AssertionError('Invalid target speech config must be rejected.')
+
+  invalid_inputs = [
+      ([[0.5, 0.5]], _frames(1)),
+      ([[0.5, 0.5, 0.5]], _frames(1)),
+      ([[np.nan, 0.5, 0.5]], _frames(1)),
+      ([[0.1, 0.1, 0.8]], _frames(2)),
+  ]
+  for probabilities, frames in invalid_inputs:
+    processor = TargetSpeechStateMachine(config)
+    try:
+      processor.process(probabilities, frames)
+    except ValueError:
+      pass
+    else:
+      raise AssertionError('Invalid target speech input must be rejected.')
