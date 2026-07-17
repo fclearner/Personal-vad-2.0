@@ -65,6 +65,28 @@ def test_event_control_metrics_and_slices():
   assert result['slices']['wham']['third_party_false_activation_rate'] == 1.0
 
 
+def test_event_confirmation_rejects_spikes_and_reports_confirmation_delay():
+  scores = np.zeros(10)
+  scores[1:3] = 0.9
+  scores[6] = 0.9
+  events = [
+      {'event_type': 'target', 'start_frame': 0, 'end_frame': 5},
+      {'event_type': 'non_target', 'start_frame': 5, 'end_frame': 10},
+  ]
+  result = event_metrics(
+      scores, events, frame_shift_ms=30.0, min_active_frames=2)
+  assert result['min_active_frames'] == 2
+  assert result['overall']['target_event_recall'] == 1.0
+  assert result['overall']['detection_latency_p50_ms'] == 60.0
+  assert result['overall']['third_party_false_activation_rate'] == 0.0
+  try:
+    event_metrics([], [], frame_shift_ms=30.0, min_active_frames=0)
+  except ValueError:
+    pass
+  else:
+    raise AssertionError('Non-positive confirmation lengths must be rejected.')
+
+
 if __name__ == '__main__':
   test_three_class_metrics_and_target_curves()
   test_nonexclusive_slice_metrics()

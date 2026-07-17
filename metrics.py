@@ -185,9 +185,24 @@ def _contiguous_regions(mask):
   return int(np.count_nonzero(np.diff(padded) == 1))
 
 
+def _confirmed_activity(active, min_active_frames):
+  if min_active_frames <= 0:
+    raise ValueError('min_active_frames must be positive.')
+  active = np.asarray(active, dtype=bool)
+  if min_active_frames == 1:
+    return active
+  confirmed = np.zeros_like(active)
+  run = 0
+  for index, value in enumerate(active):
+    run = run + 1 if value else 0
+    confirmed[index] = run >= min_active_frames
+  return confirmed
+
+
 def _compute_event_subset(target_scores, events, frame_shift_ms,
-                          duration_seconds, target_threshold):
-  active = np.asarray(target_scores) >= target_threshold
+                          duration_seconds, target_threshold,
+                          min_active_frames):
+  raw_active = np.asarray(target_scores) >= target_threshold
   target_events = 0
   target_detected = 0
   third_party_events = 0
@@ -199,10 +214,11 @@ def _compute_event_subset(target_scores, events, frame_shift_ms,
 
   for event in events:
     start = max(0, int(event['start_frame']))
-    end = min(active.size, int(event['end_frame']))
+    end = min(raw_active.size, int(event['end_frame']))
     if end <= start:
       continue
-    event_active = active[start:end]
+    event_active = _confirmed_activity(
+        raw_active[start:end], min_active_frames)
     event_type = event['event_type']
     if event_type == 'target':
       target_events += 1
@@ -244,15 +260,17 @@ def _compute_event_subset(target_scores, events, frame_shift_ms,
 
 
 def event_metrics(target_scores, events, frame_shift_ms, duration_seconds=None,
-                  target_threshold=0.5):
+                  target_threshold=0.5, min_active_frames=1):
   """Compute control metrics overall and for non-exclusive event tags."""
 
+  if min_active_frames <= 0:
+    raise ValueError('min_active_frames must be positive.')
   target_scores = np.asarray(target_scores, dtype=np.float64).reshape(-1)
   if duration_seconds is None:
     duration_seconds = target_scores.size * frame_shift_ms / 1000.0
   overall = _compute_event_subset(
       target_scores, events, frame_shift_ms, duration_seconds,
-      target_threshold)
+      target_threshold, min_active_frames)
   tags = sorted({tag for event in events for tag in _event_tags(event)})
   sliced = {}
   for tag in tags:
@@ -262,5 +280,10 @@ def event_metrics(target_scores, events, frame_shift_ms, duration_seconds=None,
     slice_duration = slice_frames * frame_shift_ms / 1000.0
     sliced[tag] = _compute_event_subset(
         target_scores, selected, frame_shift_ms, slice_duration,
-        target_threshold)
-  return {'overall': overall, 'slices': sliced}
+        target_threshold, min_active_frames)
+  return {
+      'target_threshold': float(target_threshold),
+      'min_active_frames': int(min_active_frames),
+      'overall': overall,
+      'slices': sliced,
+  }

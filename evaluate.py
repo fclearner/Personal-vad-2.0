@@ -28,6 +28,7 @@ def parse_args():
   parser.add_argument('--device', default='cpu')
   parser.add_argument('--speaker-embedding-dim', type=int, default=None)
   parser.add_argument('--target-threshold', type=float, default=0.5)
+  parser.add_argument('--min-active-frames', type=int, default=1)
   parser.add_argument('--top-errors', type=int, default=50)
   parser.add_argument('--include-curves', action='store_true')
   return parser.parse_args()
@@ -123,7 +124,7 @@ def _error_summary(sample_id, labels, predictions, target_scores, tags):
 
 
 def evaluate(model, dataset, recipes, device, target_threshold=0.5,
-             include_curves=False, top_errors=50):
+             min_active_frames=1, include_curves=False, top_errors=50):
   model = model.to(device).eval()
   accumulator = SlicedClassificationAccumulator(
       num_classes=model.num_classes, target_class=0)
@@ -182,7 +183,8 @@ def evaluate(model, dataset, recipes, device, target_threshold=0.5,
       'classification': accumulator.compute(include_curves),
       'events': event_metrics(
           scores, events, frame_shift_ms=frame_shift_ms,
-          target_threshold=target_threshold),
+          target_threshold=target_threshold,
+          min_active_frames=min_active_frames),
       'top_errors': errors[:top_errors],
   }
 
@@ -193,6 +195,8 @@ def main():
     raise ValueError('--target-threshold must be in [0, 1].')
   if args.top_errors < 0:
     raise ValueError('--top-errors must be non-negative.')
+  if args.min_active_frames <= 0:
+    raise ValueError('--min-active-frames must be positive.')
 
   checkpoint = torch.load(args.checkpoint, map_location='cpu')
   model = Pvad2.load_model_from_package(checkpoint)
@@ -203,6 +207,7 @@ def main():
   report = evaluate(
       model, dataset, recipes, torch.device(args.device),
       target_threshold=args.target_threshold,
+      min_active_frames=args.min_active_frames,
       include_curves=args.include_curves, top_errors=args.top_errors)
   report['checkpoint'] = str(Path(args.checkpoint).resolve())
   report['checkpoint_epoch'] = checkpoint.get('epoch')
