@@ -16,7 +16,8 @@ from generate_review_set import (
     _active_rms,
     _add_noise, _write_pcm16_and_reload, discover_tts_wavs,
     load_source_partitions, model_reference,
-    scaled_scenario_counts, scenario_plan, simulated_farfield_rir,
+    sample_random_seed, scaled_scenario_counts, scenario_plan,
+    simulated_farfield_rir,
     speaker_pair_plan, split_speakers, stratified_scenario_assignment,
     transform_intervals)
 
@@ -37,7 +38,23 @@ def test_scenario_plan_is_exact_and_deterministic():
       scenario: count * 10 for scenario, count in TRAIN_SCENARIOS.items()}
   assert Counter(pilot['dev']) == {
       scenario: count * 10 for scenario, count in DEV_SCENARIOS.items()}
+  assert pilot['dev'] == scenario_plan(
+      17, train_samples=4000, dev_samples=200)['dev']
   assert sum(scaled_scenario_counts(TRAIN_SCENARIOS, 83).values()) == 83
+
+
+def test_sample_random_seed_is_split_stable_and_validated():
+  assert sample_random_seed(17, 'train', 5) == 22
+  assert sample_random_seed(17, 'dev', 5) == 1_000_000_022
+  assert sample_random_seed(17, 'train', 5) != sample_random_seed(
+      17, 'dev', 5)
+  for split, sample_index in (('test', 0), ('train', -1)):
+    try:
+      sample_random_seed(17, split, sample_index)
+    except ValueError:
+      pass
+    else:
+      raise AssertionError('Invalid sample RNG inputs must be rejected.')
 
 
 def test_speaker_split_and_interval_transform():

@@ -67,16 +67,28 @@ def scaled_scenario_counts(weights, sample_count):
 
 
 def scenario_plan(seed, train_samples=80, dev_samples=20):
-  rng = random.Random(seed)
   result = {}
-  for split, counts in (
-      ('train', scaled_scenario_counts(TRAIN_SCENARIOS, train_samples)),
-      ('dev', scaled_scenario_counts(DEV_SCENARIOS, dev_samples))):
+  for split, split_offset, counts in (
+      ('train', 0,
+       scaled_scenario_counts(TRAIN_SCENARIOS, train_samples)),
+      ('dev', 1_000_000,
+       scaled_scenario_counts(DEV_SCENARIOS, dev_samples))):
     scenarios = [
         scenario for scenario, count in counts.items() for _ in range(count)]
-    rng.shuffle(scenarios)
+    random.Random(seed + split_offset).shuffle(scenarios)
     result[split] = scenarios
   return result
+
+
+def sample_random_seed(seed, split, sample_index):
+  """Return a stable RNG seed independent of other generated samples."""
+
+  if split not in {'train', 'dev'}:
+    raise ValueError(f'Unsupported split: {split}')
+  if sample_index < 0:
+    raise ValueError('sample_index must be non-negative.')
+  split_offset = 0 if split == 'train' else 1_000_000_000
+  return int(seed) + split_offset + int(sample_index)
 
 
 def speaker_pair_plan(speakers, sample_count, seed):
@@ -469,7 +481,6 @@ def _scenario_tags(scenario):
 class ReviewSetGenerator:
   def __init__(self, args):
     self.args = args
-    self.rng = random.Random(args.seed)
     self.output_dir = Path(args.output_dir).resolve()
     self.audio_dir = self.output_dir / 'audio'
     self.feature_dir = self.output_dir / 'features'
@@ -556,6 +567,8 @@ class ReviewSetGenerator:
     return path, _vad_intervals(self.vad_pipeline, path, self.vad_cache)
 
   def _build_one(self, split, scenario, sample_index, speaker_pair):
+    sample_seed = sample_random_seed(self.args.seed, split, sample_index)
+    rng = random.Random(sample_seed)
     target_speaker, non_target_speaker = speaker_pair
     target_path, target_vad = self._source(
         target_speaker, sample_index)
@@ -571,7 +584,7 @@ class ReviewSetGenerator:
       nonlocal mixture
       audio, intervals, metadata = _place_speech(
           path, source_intervals, round(offset_seconds * SAMPLE_RATE),
-          level_dbfs, farfield, self.rng if farfield else None)
+          level_dbfs, farfield, rng if farfield else None)
       mixture = mixture + audio
       metadata.update({'role': role, 'speaker_id': speaker_id})
       components.append(metadata)
@@ -595,7 +608,7 @@ class ReviewSetGenerator:
           'non_target', non_target_path, non_target_vad, 1.0, None,
           farfield=True, speaker_id=non_target_speaker)
     elif scenario == 'overlap':
-      sir_db = self.rng.choice((-5.0, 0.0, 5.0))
+      sir_db = rng.choice((-5.0, 0.0, 5.0))
       add_speech(
           'non_target', non_target_path, non_target_vad, 1.4,
           -20.0 - sir_db, speaker_id=non_target_speaker)
@@ -609,11 +622,11 @@ class ReviewSetGenerator:
     noise_metadata = None
     if scenario in {'wham_noise', 'high_noise_target'}:
       noises = self.wham[split]
-      noise_path = noises[self.rng.randrange(len(noises))]
+      noise_path = noises[rng.randrange(len(noises))]
       mixture, noise_metadata = _add_noise(
-          mixture, noise_path, self.rng,
+          mixture, noise_path, rng,
           snr_db=None if scenario == 'wham_noise'
-          else self.rng.choice((-5.0, 0.0, 5.0)),
+          else rng.choice((-5.0, 0.0, 5.0)),
           signal_intervals=target_intervals + non_target_intervals)
       noise_metadata['role'] = 'background_noise'
       components.append(noise_metadata)
@@ -665,6 +678,7 @@ class ReviewSetGenerator:
     recipe = {
         'id': sample_id,
         'seed': self.args.seed,
+        'sample_seed': sample_seed,
         'split': split,
         'scenario': scenario,
         'tags': _scenario_tags(scenario),
