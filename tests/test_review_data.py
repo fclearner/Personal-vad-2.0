@@ -15,7 +15,7 @@ from generate_review_set import (
     DEV_SCENARIOS, SAMPLE_RATE, TARGET_POSITIVE_SCENARIOS, TRAIN_SCENARIOS,
     _active_rms,
     _add_noise, _write_pcm16_and_reload, discover_tts_wavs,
-    load_source_partitions,
+    load_source_partitions, model_reference,
     scaled_scenario_counts, scenario_plan, simulated_farfield_rir,
     speaker_pair_plan, split_speakers, stratified_scenario_assignment,
     transform_intervals)
@@ -151,6 +151,12 @@ def test_tts_sources_are_split_by_train_and_dev():
     sources = discover_tts_wavs(root)
   assert [path.name for path in sources['train']] == ['response-train.wav']
   assert [path.name for path in sources['dev']] == ['response-dev.wav']
+
+
+def test_model_reference_preserves_ids_and_resolves_local_paths():
+  with tempfile.TemporaryDirectory() as directory:
+    assert model_reference(directory) == str(Path(directory).resolve())
+  assert model_reference('iic/example-model') == 'iic/example-model'
 
 
 if __name__ == '__main__':

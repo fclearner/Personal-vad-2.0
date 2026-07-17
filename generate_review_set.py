@@ -213,6 +213,12 @@ def discover_tts_wavs(tts_root):
   return result
 
 
+def model_reference(value):
+  """Persist an absolute local model path or the exact remote model id."""
+  path = Path(value).expanduser()
+  return str(path.resolve()) if path.exists() else value
+
+
 def transform_intervals(intervals, crop_start, length, offset=0,
                         tail_samples=0):
   transformed = []
@@ -746,6 +752,11 @@ class ReviewSetGenerator:
             str(Path(root).resolve()) for root in self.args.aishell_wav_root],
         'wham_root': str(Path(self.args.wham_root).resolve()),
         'tts_root': str(Path(self.args.tts_root).resolve()),
+        'preprocessing': {
+            'device': self.args.preprocess_device,
+            'vad_model': model_reference(self.args.vad_model),
+            'campplus_model': model_reference(self.args.campplus_model),
+        },
         'tts_sources': {
             split: [str(path.resolve()) for path in paths]
             for split, paths in self.tts.items()},
