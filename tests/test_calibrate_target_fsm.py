@@ -87,3 +87,40 @@ def test_selection_reports_when_release_constraint_is_unmet():
       [candidate], max_release_p95_ms=900.0)
   assert selected is candidate
   assert not selection['meets_release_latency_constraint']
+
+
+def test_recall_tolerance_prefers_safer_candidate_inside_recall_band():
+  best_recall = {
+      'config': _config(min_release_frames=2).to_dict(),
+      'metrics': {
+          'target_event_recall': 1.0,
+          'target_frame_recall': 0.9113,
+          'release_success_rate': 1.0,
+          'release_latency_p95_ms': 600.0,
+          'fragmentation_excess': 0,
+          'non_target_active_rate': 0.2124,
+          'non_speech_active_rate': 0.0276,
+      },
+  }
+  safer = {
+      'config': {
+          **_config(min_release_frames=2).to_dict(),
+          'activation_continue_threshold': 0.35,
+      },
+      'metrics': {
+          **best_recall['metrics'],
+          'target_frame_recall': 0.9106,
+          'non_target_active_rate': 0.2104,
+          'non_speech_active_rate': 0.0273,
+      },
+  }
+  exact, _ = select_candidate(
+      [best_recall, safer], max_release_p95_ms=900.0)
+  tolerant, selection = select_candidate(
+      [best_recall, safer],
+      max_release_p95_ms=900.0,
+      target_frame_recall_tolerance=0.001)
+  assert exact is best_recall
+  assert tolerant is safer
+  assert selection['recall_tolerant_candidates'] == 2
+  assert np.isclose(selection['target_frame_recall_floor'], 0.9103)

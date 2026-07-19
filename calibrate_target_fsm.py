@@ -36,6 +36,11 @@ def parse_args():
       '--min-release-frames', type=int, nargs='+',
       default=(3, 5, 8, 12, 16, 24, 32))
   parser.add_argument('--max-release-p95-ms', type=float, default=900.0)
+  parser.add_argument(
+      '--target-frame-recall-tolerance', type=float, default=0.0,
+      help=(
+          'Absolute dev recall tolerance below the best candidate before '
+          'safety metrics break ties. Defaults to exact recall.'))
   return parser.parse_args()
 
 
@@ -199,12 +204,15 @@ def _metric(candidate, name, default):
   return default if value is None else value
 
 
-def select_candidate(candidates, max_release_p95_ms):
+def select_candidate(
+    candidates, max_release_p95_ms, target_frame_recall_tolerance=0.0):
   """Recall-first selection under an explicit endpoint-latency constraint."""
   if not candidates:
     raise ValueError('At least one calibration candidate is required.')
   if max_release_p95_ms <= 0:
     raise ValueError('max_release_p95_ms must be positive.')
+  if target_frame_recall_tolerance < 0:
+    raise ValueError('target_frame_recall_tolerance must be non-negative.')
 
   best_event_recall = max(
       _metric(candidate, 'target_event_recall', -1.0)
@@ -226,25 +234,39 @@ def select_candidate(candidates, max_release_p95_ms):
           <= max_release_p95_ms)]
   meets_constraint = bool(feasible)
   pool = feasible or release_matched
+  best_target_frame_recall = max(
+      _metric(candidate, 'target_frame_recall', -1.0)
+      for candidate in pool)
+  target_frame_recall_floor = (
+      best_target_frame_recall - target_frame_recall_tolerance)
+  recall_tolerant = [
+      candidate for candidate in pool
+      if _metric(candidate, 'target_frame_recall', -1.0)
+      >= target_frame_recall_floor - 1e-12]
 
   def ranking_key(candidate):
     config = candidate['config']
     return (
-        -_metric(candidate, 'target_frame_recall', -1.0),
         _metric(candidate, 'fragmentation_excess', float('inf')),
         _metric(candidate, 'non_target_active_rate', float('inf')),
         _metric(candidate, 'non_speech_active_rate', float('inf')),
+        -_metric(candidate, 'target_frame_recall', -1.0),
         _metric(candidate, 'release_latency_p95_ms', float('inf')),
         int(config['min_release_frames']),
         -float(config['release_threshold']),
     )
 
-  selected = min(pool, key=ranking_key)
+  selected = min(recall_tolerant, key=ranking_key)
   return selected, {
       'meets_release_latency_constraint': meets_constraint,
       'max_release_p95_ms': float(max_release_p95_ms),
       'best_target_event_recall': float(best_event_recall),
       'best_release_success_rate': float(best_release_success),
+      'best_target_frame_recall': float(best_target_frame_recall),
+      'target_frame_recall_tolerance': float(
+          target_frame_recall_tolerance),
+      'target_frame_recall_floor': float(target_frame_recall_floor),
+      'recall_tolerant_candidates': len(recall_tolerant),
       'feasible_candidates': len(feasible),
       'candidate_count': len(candidates),
   }
@@ -286,6 +308,8 @@ def main():
     raise ValueError('--min-activation-frames must be positive.')
   if args.max_release_p95_ms <= 0:
     raise ValueError('--max-release-p95-ms must be positive.')
+  if args.target_frame_recall_tolerance < 0:
+    raise ValueError('--target-frame-recall-tolerance must be non-negative.')
 
   checkpoint_path = Path(args.checkpoint).resolve()
   manifest_path = Path(args.manifest).resolve()
@@ -319,7 +343,9 @@ def main():
             sample_rate=feature_config.sample_rate)
         candidates.append(evaluate_candidate(samples, config, feature_config))
   selected, selection = select_candidate(
-      candidates, args.max_release_p95_ms)
+      candidates,
+      args.max_release_p95_ms,
+      args.target_frame_recall_tolerance)
   selected_with_slices = evaluate_candidate(
       samples,
       TargetSpeechStateMachineConfig.from_dict(selected['config']),
@@ -330,7 +356,8 @@ def main():
       'schema_version': 2,
       'status': 'dev_calibrated_control_candidate',
       'selection_objective': (
-          'target_event_recall_then_release_success_then_target_frame_recall'),
+          'target_event_recall_then_release_success_then_frame_recall_band_'
+          'then_false_activation_safety'),
       'checkpoint': str(checkpoint_path),
       'checkpoint_epoch': checkpoint.get('epoch'),
       'dev_manifest': str(manifest_path),
