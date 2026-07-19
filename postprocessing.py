@@ -181,14 +181,22 @@ class TargetSpeechStateMachineConfig:
   release_threshold: float
   min_activation_frames: int
   min_release_frames: int
+  activation_continue_threshold: float | None = None
   sample_rate: int = 16000
 
   def __post_init__(self):
     if not 0.0 <= self.activation_threshold <= 1.0:
       raise ValueError('activation_threshold must be within [0, 1].')
-    if not 0.0 <= self.release_threshold <= self.activation_threshold:
+    if self.activation_continue_threshold is None:
+      object.__setattr__(
+          self, 'activation_continue_threshold', self.activation_threshold)
+    if not (
+        0.0 <= self.release_threshold
+        <= self.activation_continue_threshold
+        <= self.activation_threshold):
       raise ValueError(
-          'release_threshold must be within [0, activation_threshold].')
+          'Thresholds must satisfy release <= activation_continue <= '
+          'activation within [0, 1].')
     if self.min_activation_frames <= 0:
       raise ValueError('min_activation_frames must be positive.')
     if self.min_release_frames <= 0:
@@ -199,6 +207,7 @@ class TargetSpeechStateMachineConfig:
   def to_dict(self):
     return {
         'activation_threshold': self.activation_threshold,
+        'activation_continue_threshold': self.activation_continue_threshold,
         'release_threshold': self.release_threshold,
         'min_activation_frames': self.min_activation_frames,
         'min_release_frames': self.min_release_frames,
@@ -209,6 +218,8 @@ class TargetSpeechStateMachineConfig:
   def from_dict(cls, payload):
     return cls(
         activation_threshold=payload['activation_threshold'],
+        activation_continue_threshold=payload.get(
+            'activation_continue_threshold', payload['activation_threshold']),
         release_threshold=payload['release_threshold'],
         min_activation_frames=payload['min_activation_frames'],
         min_release_frames=payload['min_release_frames'],
@@ -278,10 +289,12 @@ class TargetSpeechStateMachineOutput:
 
 
 class TargetSpeechStateMachine:
-  """FSMN-style causal onset, hangover and release for target speech.
+  """FSMN-style causal two-threshold onset, hangover and release.
 
   Identity remains latched for the whole stream epoch after a confirmed target
   onset.  Callers must explicitly reset at an independent buffer boundary.
+  A candidate must start above the strong activation threshold; subsequent
+  confirmation frames may use the calibrated continuation threshold.
   """
 
   def __init__(self, config: TargetSpeechStateMachineConfig):
@@ -384,7 +397,11 @@ class TargetSpeechStateMachine:
       p_target = float(row[TARGET_CLASS])
       transition = None
       if not self.target_active:
-        if p_target >= self.config.activation_threshold:
+        onset_threshold = (
+            self.config.activation_continue_threshold
+            if self.activation_run_frames
+            else self.config.activation_threshold)
+        if p_target >= onset_threshold:
           if not self.activation_run_frames:
             self.candidate_start_sample = int(frame.decision_start_sample)
           self.activation_run_frames += 1

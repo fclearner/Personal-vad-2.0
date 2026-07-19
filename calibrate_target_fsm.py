@@ -23,6 +23,11 @@ def parse_args():
   parser.add_argument('--output', required=True)
   parser.add_argument('--device', default='cpu')
   parser.add_argument('--activation-threshold', type=float, required=True)
+  parser.add_argument(
+      '--activation-continue-thresholds', type=float, nargs='+', default=None,
+      help=(
+          'Candidate thresholds used only after a frame crosses the strong '
+          'activation threshold. Defaults to the activation threshold.'))
   parser.add_argument('--min-activation-frames', type=int, required=True)
   parser.add_argument(
       '--release-thresholds', type=float, nargs='+',
@@ -298,15 +303,21 @@ def main():
   samples = collect_model_outputs(model, dataset, torch.device(args.device))
 
   candidates = []
-  for release_threshold in args.release_thresholds:
-    for min_release_frames in args.min_release_frames:
-      config = TargetSpeechStateMachineConfig(
-          activation_threshold=args.activation_threshold,
-          release_threshold=release_threshold,
-          min_activation_frames=args.min_activation_frames,
-          min_release_frames=min_release_frames,
-          sample_rate=feature_config.sample_rate)
-      candidates.append(evaluate_candidate(samples, config, feature_config))
+  activation_continue_thresholds = (
+      args.activation_continue_thresholds or (args.activation_threshold,))
+  for activation_continue_threshold in activation_continue_thresholds:
+    for release_threshold in args.release_thresholds:
+      if release_threshold > activation_continue_threshold:
+        continue
+      for min_release_frames in args.min_release_frames:
+        config = TargetSpeechStateMachineConfig(
+            activation_threshold=args.activation_threshold,
+            activation_continue_threshold=activation_continue_threshold,
+            release_threshold=release_threshold,
+            min_activation_frames=args.min_activation_frames,
+            min_release_frames=min_release_frames,
+            sample_rate=feature_config.sample_rate)
+        candidates.append(evaluate_candidate(samples, config, feature_config))
   selected, selection = select_candidate(
       candidates, args.max_release_p95_ms)
   selected_with_slices = evaluate_candidate(
@@ -316,7 +327,7 @@ def main():
       include_slices=True)
 
   report = {
-      'schema_version': 1,
+      'schema_version': 2,
       'status': 'dev_calibrated_control_candidate',
       'selection_objective': (
           'target_event_recall_then_release_success_then_target_frame_recall'),

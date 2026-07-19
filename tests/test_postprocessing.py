@@ -191,6 +191,35 @@ def test_target_speech_fsm_rejects_short_target_spike():
   assert processor.snapshot_segments() == ()
 
 
+def test_target_speech_fsm_uses_strong_anchor_then_continuation_threshold():
+  processor = TargetSpeechStateMachine(_target_speech_config(
+      activation_continue_threshold=0.35,
+      min_activation_frames=3))
+  output = processor.process([
+      [0.532366, 0.30, 0.167634],
+      [0.576666, 0.25, 0.173334],
+      [0.385536, 0.40, 0.214464],
+      [0.455992, 0.35, 0.194008],
+  ], _frames(4))
+  assert [decision.state for decision in output.decisions] == [
+      'idle', 'starting', 'starting', 'active']
+  assert output.transitions[0].frame_index == 3
+  assert output.transitions[0].target_activated
+
+
+def test_target_speech_fsm_never_starts_without_strong_anchor():
+  processor = TargetSpeechStateMachine(_target_speech_config(
+      activation_continue_threshold=0.35,
+      min_activation_frames=3))
+  output = processor.process([
+      [0.54, 0.30, 0.16],
+      [0.50, 0.30, 0.20],
+      [0.40, 0.35, 0.25],
+  ], _frames(3))
+  assert not output.transitions
+  assert all(decision.state == 'idle' for decision in output.decisions)
+
+
 def test_target_speech_fsm_state_survives_chunks_and_reset_is_explicit():
   processor = TargetSpeechStateMachine(_target_speech_config())
   first = processor.process([[0.70, 0.20, 0.10]], _frames(1))
@@ -224,6 +253,12 @@ def test_target_speech_fsm_config_round_trip_and_input_validation():
        'min_activation_frames': 1, 'min_release_frames': 1},
       {'activation_threshold': 0.5, 'release_threshold': 0.2,
        'min_activation_frames': 0, 'min_release_frames': 1},
+      {'activation_threshold': 0.5, 'activation_continue_threshold': 0.6,
+       'release_threshold': 0.2,
+       'min_activation_frames': 1, 'min_release_frames': 1},
+      {'activation_threshold': 0.5, 'activation_continue_threshold': 0.1,
+       'release_threshold': 0.2,
+       'min_activation_frames': 1, 'min_release_frames': 1},
   ]
   for values in invalid_configs:
     try:
