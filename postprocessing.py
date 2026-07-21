@@ -258,6 +258,8 @@ class TargetSpeechTransition:
 class TargetSpeechFrameDecision:
   frame: FeatureFrame
   p_target: float
+  p_non_target: float
+  non_target_dominant: bool
   state: str
   target_active: bool
   identity_latched: bool
@@ -271,6 +273,8 @@ class TargetSpeechFrameDecision:
         'decision_start_sample': self.frame.decision_start_sample,
         'decision_end_sample': self.frame.decision_end_sample,
         'p_target': self.p_target,
+        'p_non_target': self.p_non_target,
+        'non_target_dominant': self.non_target_dominant,
         'state': self.state,
         'target_active': self.target_active,
         'identity_latched': self.identity_latched,
@@ -295,6 +299,9 @@ class TargetSpeechStateMachine:
   onset.  Callers must explicitly reset at an independent buffer boundary.
   A candidate must start above the strong activation threshold; subsequent
   confirmation frames may use the calibrated continuation threshold.
+  Dominant non-target posterior is explicit identity-negative evidence: it
+  cancels a pending onset and advances release, while non-speech keeps the
+  ordinary target-probability hangover behavior.
   """
 
   def __init__(self, config: TargetSpeechStateMachineConfig):
@@ -395,13 +402,15 @@ class TargetSpeechStateMachine:
             'new stream.')
       self.next_frame_index = frame.index + 1
       p_target = float(row[TARGET_CLASS])
+      p_non_target = float(row[NON_TARGET_CLASS])
+      non_target_dominant = p_non_target > p_target
       transition = None
       if not self.target_active:
         onset_threshold = (
             self.config.activation_continue_threshold
             if self.activation_run_frames
             else self.config.activation_threshold)
-        if p_target >= onset_threshold:
+        if p_target >= onset_threshold and not non_target_dominant:
           if not self.activation_run_frames:
             self.candidate_start_sample = int(frame.decision_start_sample)
           self.activation_run_frames += 1
@@ -410,7 +419,8 @@ class TargetSpeechStateMachine:
         else:
           self.activation_run_frames = 0
           self.candidate_start_sample = None
-      elif p_target >= self.config.release_threshold:
+      elif (p_target >= self.config.release_threshold
+            and not non_target_dominant):
         self.release_run_frames = 0
         self.last_target_end_sample = int(frame.decision_end_sample)
       else:
@@ -423,6 +433,8 @@ class TargetSpeechStateMachine:
       decisions.append(TargetSpeechFrameDecision(
           frame=frame,
           p_target=p_target,
+          p_non_target=p_non_target,
+          non_target_dominant=non_target_dominant,
           state=self.state,
           target_active=self.target_active,
           identity_latched=self.identity_latched,

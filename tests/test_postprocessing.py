@@ -158,8 +158,8 @@ def test_target_speech_fsm_confirms_hangs_over_recovers_and_releases():
   output = processor.process([
       [0.60, 0.20, 0.20],
       [0.70, 0.20, 0.10],
-      [0.10, 0.80, 0.10],
-      [0.30, 0.60, 0.10],
+      [0.10, 0.20, 0.70],
+      [0.30, 0.10, 0.60],
       [0.10, 0.20, 0.70],
       [0.05, 0.15, 0.80],
   ], frames)
@@ -198,13 +198,62 @@ def test_target_speech_fsm_uses_strong_anchor_then_continuation_threshold():
   output = processor.process([
       [0.532366, 0.30, 0.167634],
       [0.576666, 0.25, 0.173334],
-      [0.385536, 0.40, 0.214464],
+      [0.385536, 0.30, 0.314464],
       [0.455992, 0.35, 0.194008],
   ], _frames(4))
   assert [decision.state for decision in output.decisions] == [
       'idle', 'starting', 'starting', 'active']
   assert output.transitions[0].frame_index == 3
   assert output.transitions[0].target_activated
+
+
+def test_target_speech_fsm_non_target_cancels_pending_onset():
+  processor = TargetSpeechStateMachine(_target_speech_config(
+      activation_continue_threshold=0.35))
+  output = processor.process([
+      [0.60, 0.20, 0.20],
+      [0.40, 0.45, 0.15],
+      [0.70, 0.20, 0.10],
+      [0.60, 0.20, 0.20],
+  ], _frames(4))
+  assert [decision.state for decision in output.decisions] == [
+      'starting', 'idle', 'starting', 'active']
+  negative = output.decisions[1]
+  assert negative.non_target_dominant
+  assert negative.p_non_target == 0.45
+  assert negative.to_dict()['non_target_dominant']
+  assert output.transitions[0].frame_index == 3
+
+
+def test_target_speech_fsm_non_target_advances_release():
+  processor = TargetSpeechStateMachine(_target_speech_config())
+  frames = _frames(4)
+  output = processor.process([
+      [0.60, 0.20, 0.20],
+      [0.70, 0.20, 0.10],
+      [0.35, 0.50, 0.15],
+      [0.34, 0.50, 0.16],
+  ], frames)
+  assert [decision.state for decision in output.decisions] == [
+      'starting', 'active', 'hangover', 'idle']
+  assert all(
+      decision.non_target_dominant for decision in output.decisions[2:])
+  assert output.transitions[-1].target_released
+  assert output.completed_segments == ((
+      frames[0].decision_start_sample,
+      frames[1].decision_end_sample),)
+
+
+def test_target_speech_fsm_non_speech_does_not_compete_as_identity():
+  processor = TargetSpeechStateMachine(_target_speech_config())
+  output = processor.process([
+      [0.60, 0.20, 0.20],
+      [0.70, 0.20, 0.10],
+      [0.30, 0.10, 0.60],
+  ], _frames(3))
+  assert output.decisions[-1].state == 'active'
+  assert not output.decisions[-1].non_target_dominant
+  assert not output.transitions[-1].target_released
 
 
 def test_target_speech_fsm_never_starts_without_strong_anchor():
