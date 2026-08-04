@@ -5,4 +5,5 @@ runs/
 *.pt
 *.pth
 !checkpoints/aishell1_forcealign_epoch1/best.pt
+!checkpoints/pilot4k_speaker_aware_epoch38/best_inference.pt
 *.pid

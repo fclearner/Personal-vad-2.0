@@ -1,0 +1,18 @@
+{
+  "code_provenance": {
+    "checkpoint_embedded_git_commit": null,
+    "current_code_snapshot": "0ffe3ac513eb5ae836737d64055ee1d83596201a",
+    "note": "The source checkpoint does not embed a git_commit field.",
+    "strongest_code_evidence_before_training_start": "6ccf66ca38d88c977e11098b9ae48cda3148d8b0"
+  },
+  "epoch": 38,
+  "schema_version": 1,
+  "selection": {
+    "metric": "target_f1",
+    "score": 0.8633011911514464
+  },
+  "source_file_name": "best.pt",
+  "source_mtime": "2026-07-17T09:41:04.150000+08:00",
+  "source_sha256": "4ccafe36a985bbbc6d461c367cf8a259bac25341407b276eeba591f587d2e8d8",
+  "source_size_bytes": 5087103
+}
