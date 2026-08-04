@@ -1,0 +1,96 @@
+{
+  "class_names": {
+    "0": "target",
+    "1": "non_target",
+    "2": "non_speech"
+  },
+  "dataset": "AISHELL1 balanced200",
+  "labeling": {
+    "decision_window_ms": 32,
+    "minimum_active_coverage": 0.5,
+    "overlap_priority": "target"
+  },
+  "pairing": {
+    "current_audio_excludes_enrollment": true,
+    "enrollment_selection": "first two utterances",
+    "target_non_target_pairing": "same-split cyclic nonzero-offset pairing"
+  },
+  "public_source_categories": [
+    "AISHELL1",
+    "WHAM tr/cv",
+    "Qwen3-Omni TTS",
+    "FSMN intervals",
+    "CAM++ enrollment"
+  ],
+  "schema_version": 1,
+  "speaker_conditioning": {
+    "backend": "CAM++",
+    "embedding_dimension": 192,
+    "enrollment_dropout_probability": 0.1,
+    "extraction": "offline",
+    "frozen": true
+  },
+  "speaker_disjoint": true,
+  "splits": {
+    "dev": {
+      "gender": {
+        "female": 10,
+        "male": 10
+      },
+      "pilot4k": {
+        "class_frame_counts": {
+          "0": 14120,
+          "1": 12369,
+          "2": 39911
+        },
+        "duration_seconds": 2000,
+        "frames": 66400,
+        "recipes": 200
+      },
+      "source_duration_hours": 4.847,
+      "speakers": 20,
+      "utterances": {
+        "current": 3883,
+        "enrollment": 40
+      }
+    },
+    "test": {
+      "gender": {
+        "female": 10,
+        "male": 10
+      },
+      "pilot4k": {
+        "recipes": 0,
+        "status": "Twenty test speakers are reserved; no test recipes were generated or evaluated."
+      },
+      "source_duration_hours": 5.11,
+      "speakers": 20,
+      "utterances": {
+        "current": 3915,
+        "enrollment": 40
+      }
+    },
+    "train": {
+      "gender": {
+        "female": 80,
+        "male": 80
+      },
+      "pilot4k": {
+        "class_frame_counts": {
+          "0": 275644,
+          "1": 249826,
+          "2": 802530
+        },
+        "duration_seconds": 40000,
+        "frames": 1328000,
+        "recipes": 4000
+      },
+      "source_duration_hours": 39.1962,
+      "speakers": 160,
+      "utterances": {
+        "current": 31517,
+        "enrollment": 320
+      }
+    }
+  }
+}

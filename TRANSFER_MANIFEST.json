@@ -1,0 +1,29 @@
+{
+  "files": [
+    {
+      "path": "checkpoints/pilot4k_speaker_aware_epoch38/best_inference.pt",
+      "sha256": "142419ebd37fb0a160acc3c75c0571cf8d0c420f2535fb450a5cbb3f7add3753",
+      "size_bytes": 1843557,
+      "source_category": "sanitized_inference_export"
+    },
+    {
+      "path": "checkpoints/pilot4k_speaker_aware_epoch38/SOURCE_CHECKPOINT.json",
+      "sha256": "ee1b63713cafb36978c14b41d8bbfe56bdbff3482ee2449678a3e1463b68d638",
+      "size_bytes": 641,
+      "source_category": "sanitized_source_provenance"
+    },
+    {
+      "path": "metadata/DATASET_SUMMARY.json",
+      "sha256": "c5aa378e282552a655a0973c7162b7a8eab0d29468c7c14e02834a818322d630",
+      "size_bytes": 2114,
+      "source_category": "public_aggregate_dataset_metadata"
+    },
+    {
+      "path": "metadata/DEV_METRICS.json",
+      "sha256": "52342d2c122185140bc9fcc43a567269dbdebf49937ebefd708a1a317c77284d",
+      "size_bytes": 41377,
+      "source_category": "public_aggregate_evaluation_metadata"
+    }
+  ],
+  "manifest_version": 1
+}
