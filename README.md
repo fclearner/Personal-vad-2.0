@@ -74,6 +74,13 @@ The model can consume external speaker embeddings by changing
 `--speaker-embedding-dim`. A local smoke test with ModelScope CAM++ works with
 192-dim embeddings:
 
+CAM++ is open source as part of the
+[ModelScope 3D-Speaker](https://github.com/modelscope/3D-Speaker) project
+(Apache-2.0). The exact upstream model used here is
+[`iic/speech_campplus_sv_zh-cn_16k-common`](https://modelscope.cn/models/iic/speech_campplus_sv_zh-cn_16k-common).
+This repository does not bundle CAM++ weights; it consumes the 192-dimensional
+embeddings produced by the upstream model.
+
 ```bash
 pip install -r requirements-speaker.txt
 python -m speaker_backends.modelscope_export \
@@ -95,6 +102,29 @@ instead of the model id, for example:
 ```bash
 python -m speaker_backends.modelscope_export \
   path/to/enrollment.wav \
-  --model C:\Users\alanf\.cache\modelscope\hub\models\iic\speech_campplus_sv_zh-cn_16k-common \
+  --model path/to/modelscope/cache/iic/speech_campplus_sv_zh-cn_16k-common \
   --output-dir data/embeddings
 ```
+
+## Trained speaker-aware example
+
+The repository includes the sanitized epoch-38 pilot4k checkpoint and an
+end-to-end example using external CAM++ enrollment embeddings:
+
+```bash
+python -m speaker_backends.modelscope_export \
+  enrollment_1.wav enrollment_2.wav \
+  --output-dir data/enrollment
+
+python examples/pilot4k_speaker_aware_inference.py \
+  --audio current.wav \
+  --embedding data/enrollment/enrollment_1.spk.npy \
+  --embedding data/enrollment/enrollment_2.spk.npy \
+  --output pvad_result.json
+```
+
+See the
+[checkpoint model card](checkpoints/pilot4k_speaker_aware_epoch38/README.md)
+for the exact data recipe, split counts, label construction, checksums,
+validation metrics, and limitations. Aggregate source and evaluation metadata
+are in `metadata/DATASET_SUMMARY.json` and `metadata/DEV_METRICS.json`.
