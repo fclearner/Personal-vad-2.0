@@ -17,6 +17,8 @@ sys.path.insert(0, str(ROOT))
 
 from features import PvadFeatureExtractor, load_audio
 from model.pvad2 import Pvad2
+from postprocessing import (
+    TargetSpeechStateMachine, TargetSpeechStateMachineConfig)
 
 
 DEFAULT_CHECKPOINT = (
@@ -24,6 +26,11 @@ DEFAULT_CHECKPOINT = (
     / 'best_inference.pt')
 CHECKPOINT_SHA256 = (
     '142419ebd37fb0a160acc3c75c0571cf8d0c420f2535fb450a5cbb3f7add3753')
+DEFAULT_CALIBRATION = (
+    ROOT / 'checkpoints' / 'pilot4k_speaker_aware_epoch38'
+    / 'target_fsm.json')
+CALIBRATION_SHA256 = (
+    '081d624b8424c7591eb9c76ecdd212be24b1c5e6696ddbe05d851c95ad4e676f')
 PACKAGE_KEYS = {
     'state_dict', 'model_config', 'epoch', 'selection_metric',
     'selection_score', 'class_names', 'source_checkpoint_sha256',
@@ -43,6 +50,9 @@ def parse_args():
       '--embedding', action='append', required=True,
       help='CAM++ .npy enrollment embedding. Repeat for multiple clips.')
   parser.add_argument('--checkpoint', default=str(DEFAULT_CHECKPOINT))
+  parser.add_argument(
+      '--calibration', default=str(DEFAULT_CALIBRATION),
+      help='Dev-calibrated target speech FSM JSON.')
   parser.add_argument('--device', default='cpu')
   parser.add_argument(
       '--output', help='Optional JSON output path. Defaults to stdout.')
@@ -63,10 +73,11 @@ def sha256_file(path: str | Path) -> str:
 def load_checkpoint(path: str | Path, device: torch.device):
   path = Path(path)
   actual_sha256 = sha256_file(path)
-  if actual_sha256 != CHECKPOINT_SHA256:
-    raise ValueError(
-        f'Checkpoint SHA256 mismatch: expected {CHECKPOINT_SHA256}, '
-        f'got {actual_sha256}.')
+  if path.resolve() == DEFAULT_CHECKPOINT.resolve():
+    if actual_sha256 != CHECKPOINT_SHA256:
+      raise ValueError(
+          f'Checkpoint SHA256 mismatch: expected {CHECKPOINT_SHA256}, '
+          f'got {actual_sha256}.')
   try:
     package = torch.load(path, map_location=device, weights_only=True)
   except TypeError:  # PyTorch 1.x compatibility.
@@ -78,6 +89,24 @@ def load_checkpoint(path: str | Path, device: torch.device):
         f'{sorted(set(package) - PACKAGE_KEYS)}.')
   model = Pvad2.load_model_from_package(package).to(device).eval()
   return model, package
+
+
+def load_calibration(path: str | Path):
+  """Load and validate a target-speech state-machine calibration."""
+
+  path = Path(path)
+  actual_sha256 = sha256_file(path)
+  if path.resolve() == DEFAULT_CALIBRATION.resolve():
+    if actual_sha256 != CALIBRATION_SHA256:
+      raise ValueError(
+          f'Calibration SHA256 mismatch: expected {CALIBRATION_SHA256}, '
+          f'got {actual_sha256}.')
+  payload = json.loads(path.read_text(encoding='utf-8'))
+  if payload.get('status') != 'dev_calibrated_control_candidate':
+    raise ValueError('Calibration status is missing or unsupported.')
+  config = TargetSpeechStateMachineConfig.from_dict(
+      payload['target_speech_state_machine'])
+  return config, payload, actual_sha256
 
 
 def load_features(path: str | Path) -> torch.Tensor:
@@ -135,7 +164,7 @@ def merge_predictions(probabilities, frames, class_names, sample_rate=16000):
 
 
 def run_inference(model, features, embedding, class_names, device,
-                  include_frames=False):
+                  include_frames=False, target_fsm_config=None):
   if features.size(0) == 0:
     raise ValueError('No feature frames were produced.')
   extractor = PvadFeatureExtractor(device='cpu')
@@ -153,6 +182,23 @@ def run_inference(model, features, embedding, class_names, device,
                   for index, name in enumerate(class_names)},
       'segments': segments,
   }
+  if target_fsm_config is not None:
+    state_machine = TargetSpeechStateMachine(target_fsm_config)
+    state_output = state_machine.process(probabilities, frames)
+    stream_end_sample = frames[-1].decision_end_sample
+    target_segments = state_machine.snapshot_segments(stream_end_sample)
+    result['target_speech_fsm'] = {
+        'config': target_fsm_config.to_dict(),
+        'identity_latched': state_machine.identity_latched,
+        'segments': [{
+            'start_ms': round(
+                start * 1000.0 / target_fsm_config.sample_rate, 3),
+            'end_ms': round(
+                end * 1000.0 / target_fsm_config.sample_rate, 3),
+        } for start, end in target_segments],
+        'transitions': [
+            transition.to_dict() for transition in state_output.transitions],
+    }
   if include_frames:
     result['frame_predictions'] = [{
         'index': index,
@@ -174,6 +220,8 @@ def main():
   args = parse_args()
   device = torch.device(args.device)
   model, package = load_checkpoint(args.checkpoint, device)
+  target_fsm_config, calibration, calibration_sha256 = load_calibration(
+      args.calibration)
   embedding = aggregate_enrollment_embeddings(args.embedding)
   if args.features:
     features = load_features(args.features)
@@ -186,9 +234,10 @@ def main():
   class_names = list(package['class_names'])
   result = run_inference(
       model, features, embedding, class_names, device,
-      include_frames=args.include_frames)
+      include_frames=args.include_frames,
+      target_fsm_config=target_fsm_config)
   result.update({
-      'checkpoint_sha256': CHECKPOINT_SHA256,
+      'checkpoint_sha256': sha256_file(args.checkpoint),
       'checkpoint_epoch': int(package['epoch']),
       'selection_metric': package['selection_metric'],
       'selection_score': float(package['selection_score']),
@@ -196,6 +245,8 @@ def main():
       'speaker_embedding_backend': 'CAM++',
       'speaker_embedding_dimension': int(
           package['model_config']['speaker_embedding_dim']),
+      'calibration_sha256': calibration_sha256,
+      'calibration_status': calibration['status'],
   })
   rendered = json.dumps(result, indent=2, ensure_ascii=False) + '\n'
   if args.output:

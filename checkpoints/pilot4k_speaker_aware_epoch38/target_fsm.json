@@ -1,0 +1,51 @@
+{
+  "checkpoint": {
+    "epoch": 38,
+    "inference_sha256": "142419ebd37fb0a160acc3c75c0571cf8d0c420f2535fb450a5cbb3f7add3753",
+    "source_sha256": "4ccafe36a985bbbc6d461c367cf8a259bac25341407b276eeba591f587d2e8d8"
+  },
+  "constraints": {
+    "dev_only": true,
+    "online_actions_enabled": false,
+    "test_set_used": false
+  },
+  "feature_config": {
+    "f_max": null,
+    "f_min": 0.0,
+    "fft_size": 1024,
+    "frame_length_ms": 32.0,
+    "frame_shift_ms": 10.0,
+    "log_floor": 1e-10,
+    "mel_scale": "htk",
+    "num_mel_bins": 128,
+    "sample_rate": 16000,
+    "stack_frames": 4,
+    "subsample_factor": 3
+  },
+  "schema_version": 1,
+  "selected_dev_metrics": {
+    "detection_latency_p50_ms": 90.0,
+    "detection_latency_p95_ms": 392.99999999999983,
+    "false_activation_transitions": 56,
+    "non_speech_active_rate": 0.027285710706321565,
+    "non_target_active_rate": 0.21044546850998463,
+    "release_latency_p50_ms": 360.0,
+    "release_latency_p95_ms": 824.9999999999991,
+    "release_success_rate": 0.99,
+    "target_event_recall": 1.0,
+    "target_frame_recall": 0.9105524079320113
+  },
+  "source_artifact": {
+    "file_name": "postprocess_control_fsm_dev_v2_dual_threshold.json",
+    "sha256": "5f1acfb6539aeb2c4a411f20d898f7241fc289793c7ba554b061808c88f6d413"
+  },
+  "status": "dev_calibrated_control_candidate",
+  "target_speech_state_machine": {
+    "activation_continue_threshold": 0.35,
+    "activation_threshold": 0.55,
+    "min_activation_frames": 3,
+    "min_release_frames": 12,
+    "release_threshold": 0.2,
+    "sample_rate": 16000
+  }
+}

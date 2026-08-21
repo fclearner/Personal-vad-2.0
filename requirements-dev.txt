@@ -1,0 +1,2 @@
+-r requirements-data.txt
+pytest>=7

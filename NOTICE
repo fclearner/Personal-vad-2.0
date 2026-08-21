@@ -1,0 +1,11 @@
+Personal-vad-2.0
+Copyright 2026 Personal-vad-2.0 contributors
+
+This product includes software derived from WeNet, which is licensed under
+the Apache License 2.0 and itself acknowledges code borrowed from ESPnet.
+Original copyright and attribution notices retained in individual source
+files remain in effect.
+
+CAM++/3D-Speaker, Qwen3-Omni, AISHELL-1, and WHAM! are not bundled as source
+datasets or upstream model weights. Their licenses and attribution requirements
+are documented in THIRD_PARTY.md.

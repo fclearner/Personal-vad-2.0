@@ -13,10 +13,23 @@ conditioning from speaker cosine similarity, and 3 frame classes:
 
 ![Personal VAD 2.0](./personal_vad2.0.png)
 
+This repository includes the standalone model, deterministic acoustic
+frontend, speaker-disjoint mixture generator, CAM++ embedding export/audit,
+training and evaluation loops, causal streaming adapter, calibrated target
+speech state machine, tests, and a sanitized speaker-aware checkpoint. It does
+not include the private Qwen3-Omni duplex service integration, raw datasets,
+upstream model weights, enrollment audio, or biometric embeddings.
+
 ## Install
 
 ```bash
 pip install -r requirements.txt
+```
+
+For data generation and the test suite:
+
+```bash
+pip install -r requirements-dev.txt
 ```
 
 ## Smoke Test
@@ -97,6 +110,9 @@ precision/recall/F1/support values, a confusion matrix, macro-F1, and
 target-vs-rest approximate PR/ROC summaries. `--max-steps-per-epoch` bounds
 20-step batch-size and stability checks without starting a long run.
 
+The complete reference pipeline and exact pilot4k commands are in
+[`docs/TRAINING.md`](docs/TRAINING.md).
+
 ## Streaming Inference
 
 `PvadStreamingAdapter` accepts arbitrary mono-audio chunks and returns aligned
@@ -121,7 +137,9 @@ target_probability = output.probabilities[:, 0]
 Set `measure_rtf=True` only for benchmarking: CUDA synchronization is then
 included in the reported cumulative real-time factor. Call `reset()` at an
 utterance/session boundary; changing batch size or reusing caches across
-independent audio is rejected.
+independent audio is rejected. Feed the returned probabilities and aligned
+frames into `TargetSpeechStateMachine` from `postprocessing.py` for the
+published deployed-style onset/release policy.
 
 ## Speaker Embeddings
 
@@ -164,7 +182,8 @@ python -m speaker_backends.modelscope_export \
 ## Trained speaker-aware example
 
 The repository includes the sanitized epoch-38 pilot4k checkpoint and an
-end-to-end example using external CAM++ enrollment embeddings:
+end-to-end example using external CAM++ enrollment embeddings and the
+published dev-calibrated target-speech FSM:
 
 ```bash
 python -m speaker_backends.modelscope_export \
@@ -183,3 +202,11 @@ See the
 for the exact data recipe, split counts, label construction, checksums,
 validation metrics, and limitations. Aggregate source and evaluation metadata
 are in `metadata/DATASET_SUMMARY.json` and `metadata/DEV_METRICS.json`.
+
+## License and data terms
+
+Repository source code is Apache-2.0. External software, model weights, source
+audio, generated TTS, and the published checkpoint remain subject to their
+applicable upstream terms. In particular, the reference recipe used WHAM!
+noise under CC BY-NC 4.0. See [`THIRD_PARTY.md`](THIRD_PARTY.md) before
+redistribution or commercial use.

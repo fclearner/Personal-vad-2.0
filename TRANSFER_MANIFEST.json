@@ -7,6 +7,12 @@
       "source_category": "sanitized_inference_export"
     },
     {
+      "path": "checkpoints/pilot4k_speaker_aware_epoch38/target_fsm.json",
+      "sha256": "081d624b8424c7591eb9c76ecdd212be24b1c5e6696ddbe05d851c95ad4e676f",
+      "size_bytes": 1573,
+      "source_category": "sanitized_dev_calibration"
+    },
+    {
       "path": "checkpoints/pilot4k_speaker_aware_epoch38/SOURCE_CHECKPOINT.json",
       "sha256": "ee1b63713cafb36978c14b41d8bbfe56bdbff3482ee2449678a3e1463b68d638",
       "size_bytes": 641,

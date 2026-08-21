@@ -16,14 +16,18 @@ near-field non-target false-activation requirement was not met.
 | Artifact | Size | SHA256 |
 |---|---:|---|
 | `best_inference.pt` | 1,843,557 bytes | `142419ebd37fb0a160acc3c75c0571cf8d0c420f2535fb450a5cbb3f7add3753` |
+| `target_fsm.json` | 1,573 bytes | `081d624b8424c7591eb9c76ecdd212be24b1c5e6696ddbe05d851c95ad4e676f` |
 | Original DGX `best.pt` | 5,087,103 bytes | `4ccafe36a985bbbc6d461c367cf8a259bac25341407b276eeba591f587d2e8d8` |
+| Original dev calibration | not published | `5f1acfb6539aeb2c4a411f20d898f7241fc289793c7ba554b061808c88f6d413` |
 
 The original checkpoint is not published. The inference export contains only
 `state_dict`, `model_config`, epoch/selection fields, class names, the source
 checksum, and an export format version. It contains no optimizer, training
 arguments, absolute paths, raw manifests, audio, or speaker/utterance IDs.
 `SOURCE_CHECKPOINT.json` and the repository-level `TRANSFER_MANIFEST.json`
-record the remaining provenance and file checksums.
+record the remaining provenance and file checksums. `target_fsm.json` is a
+path-free subset of the original dev calibration with the selected policy,
+frontend configuration, constraints, aggregate metrics, and source checksum.
 
 The source checkpoint was selected at epoch 38 by dev target-class F1
 (`0.8633011912`). Its strongest recorded pre-training code evidence is commit
@@ -119,6 +123,11 @@ broad range of unseen speakers.
 Full aggregate metrics, confusion matrices, raw-threshold results, calibrated
 FSM slices, and limitations are in `metadata/DEV_METRICS.json`.
 
+The source code is Apache-2.0, but that does not replace the terms of the
+training sources. The reference recipe used WHAM! noise under CC BY-NC 4.0;
+the checkpoint is published for research/evaluation without granting rights
+beyond the applicable upstream terms. See `THIRD_PARTY.md` at repository root.
+
 ## Run the example
 
 Install the base and speaker-export dependencies, then export two enrollment
@@ -143,6 +152,7 @@ python examples/pilot4k_speaker_aware_inference.py \
 
 The example verifies the checkpoint checksum, normalizes/aggregates the CAM++
 embeddings exactly as in training, extracts the 512-dimensional acoustic
-features, and emits merged target/non-target/non-speech segments. The emitted
-segments use raw three-class argmax predictions; they are intentionally not
-presented as the calibrated FSM evaluation.
+features, and emits both raw target/non-target/non-speech segments and the
+calibrated target-speech FSM segments/transitions. The complete reference data,
+training, evaluation, calibration, and inference-export commands are in
+`docs/TRAINING.md` at repository root.

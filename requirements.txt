@@ -1,4 +1,4 @@
-torch>=1.13
+torch>=2.3
 numpy>=1.21
-torchaudio>=2.1
+torchaudio>=2.3
 soundfile>=0.12
